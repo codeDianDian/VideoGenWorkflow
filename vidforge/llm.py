@@ -95,8 +95,9 @@ def _ask_deepseek(system: str, user: str, max_tokens: int) -> str:
     """DeepSeek speaks the OpenAI chat-completions protocol verbatim, so we
     reuse the OpenAI SDK and only swap the base URL + key.
 
-    Default model: ``deepseek-chat`` (V3.x); set ``VIDFORGE_LLM_MODEL=deepseek-reasoner``
-    for R1 if you need stronger reasoning at higher cost/latency. Both honour
+    Default model: ``deepseek-v4-pro``; use ``deepseek-v4-flash`` for lower
+    latency/cost. Legacy ``deepseek-chat`` / ``deepseek-reasoner`` names are
+    being retired — see DeepSeek API release notes. Uses
     ``response_format={"type": "json_object"}``.
     """
     from openai import OpenAI

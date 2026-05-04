@@ -17,8 +17,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    llm_provider: Literal["anthropic", "openai", "deepseek"] = "anthropic"
-    llm_model: str = "claude-sonnet-4-5"
+    llm_provider: Literal["anthropic", "openai", "deepseek"] = "deepseek"
+    llm_model: str = "deepseek-v4-pro"
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")

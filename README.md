@@ -32,7 +32,7 @@ playwright install chromium
 
 brew install ffmpeg                 # or your OS equivalent
 
-cp .env.example .env                # set ANTHROPIC_API_KEY (or OPENAI_API_KEY)
+cp .env.example .env                # set DEEPSEEK_API_KEY (or ANTHROPIC_/OPENAI_)
 ```
 
 Optional — for the **HyperFrames** renderer (the route shown in the original infographic):
