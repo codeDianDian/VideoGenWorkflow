@@ -45,6 +45,10 @@ see `APIConnectionError`, update to the latest `vidforge` (longer HTTP timeouts)
 or check VPN / firewall to `api.deepseek.com`.
 ```
 
+If **Playwright render** times out waiting for `dataset.ready`, set
+`VIDFORGE_PLAYWRIGHT_READY_TIMEOUT_MS` in `.env` (default **120000** ms; was 30s
+before).
+
 Optional — for the **HyperFrames** renderer (the route shown in the original infographic):
 
 ```bash

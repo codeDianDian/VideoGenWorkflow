@@ -87,7 +87,11 @@ async def _record_with_playwright(project_dir: Path, output_path: Path, plan: Sc
         page = await ctx.new_page()
         url = f"file://{(project_dir / 'index.html').resolve()}?autoplay=1"
         await page.goto(url, wait_until="load")
-        await page.wait_for_function("document.body.dataset.ready === '1'", timeout=30_000)
+        ready_timeout = max(int(settings.playwright_ready_timeout_ms), 30_000)
+        await page.wait_for_function(
+            "document.body.dataset.ready === '1'",
+            timeout=ready_timeout,
+        )
         await page.evaluate("window.__startVideo && window.__startVideo()")
         await page.wait_for_function(
             "document.body.dataset.done === '1'",
