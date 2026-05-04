@@ -2,6 +2,8 @@
 
 Drop a `.md`, `.txt`, or `.pdf` script here.
 
+Example script (checked into the repo): `examples/xiaohongshu_scifi_kids_30s.md` — copy or symlink it here to try the watcher.
+
 When the watcher is running (`make watch` or the launchd service), every new
 file is picked up automatically and processed end-to-end. Each input creates a
 self-contained folder under `../runs/<timestamp>__<slug>/` containing:
