@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import subprocess
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +27,16 @@ console = Console()
 def _ensure_ffmpeg() -> None:
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg not found on PATH. `brew install ffmpeg` or your OS equivalent.")
+
+
+def _playwright_done_timeout_ms(plan: ScriptPlan) -> int:
+    """Wait for ``dataset.done`` until timeline tail + buffer (GSAP often exceeds nominal plan)."""
+    tail = max((float(s.end) for s in plan.segments), default=0.0)
+    nominal = max(float(plan.total_duration), tail)
+    buf = float(settings.playwright_done_buffer_s)
+    ms = int((nominal + buf) * 1000)
+    floor = int(settings.playwright_done_timeout_floor_ms)
+    return max(ms, floor, 60_000)
 
 
 def render_with_hyperframes(project_dir: Path, output_path: Path, plan: ScriptPlan) -> RenderJob:
@@ -76,6 +87,15 @@ async def _record_with_playwright(project_dir: Path, output_path: Path, plan: Sc
     workdir = output_path.parent / "_pw"
     workdir.mkdir(parents=True, exist_ok=True)
 
+    err_log = output_path.parent / "render_error.log"
+    browser_lines: list[str] = []
+    url = f"file://{(project_dir / 'index.html').resolve()}?autoplay=1"
+    ready_timeout = max(int(settings.playwright_ready_timeout_ms), 30_000)
+    done_timeout_ms = _playwright_done_timeout_ms(plan)
+
+    def _on_console(msg) -> None:
+        browser_lines.append(f"{msg.type}: {msg.text}")
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--autoplay-policy=no-user-gesture-required"])
         ctx = await browser.new_context(
@@ -85,25 +105,73 @@ async def _record_with_playwright(project_dir: Path, output_path: Path, plan: Sc
             record_video_size={"width": settings.width, "height": settings.height},
         )
         page = await ctx.new_page()
-        url = f"file://{(project_dir / 'index.html').resolve()}?autoplay=1"
-        await page.goto(url, wait_until="load")
-        ready_timeout = max(int(settings.playwright_ready_timeout_ms), 30_000)
-        await page.wait_for_function(
-            "document.body.dataset.ready === '1'",
-            timeout=ready_timeout,
-        )
-        await page.evaluate("window.__startVideo && window.__startVideo()")
-        await page.wait_for_function(
-            "document.body.dataset.done === '1'",
-            timeout=max(int((plan.total_duration + 45) * 1000), 120_000),
-        )
+        page.on("console", _on_console)
+
+        def _pageerror(err) -> None:
+            browser_lines.append(f"pageerror: {err!r}")
+
+        page.on("pageerror", _pageerror)
+
+        ready_val = ""
+        done_val = ""
+        try:
+            await page.goto(url, wait_until="load")
+            await page.wait_for_function(
+                "document.body.dataset.ready === '1'",
+                timeout=ready_timeout,
+            )
+            await page.evaluate("window.__startVideo && window.__startVideo()")
+            await page.wait_for_function(
+                "document.body.dataset.done === '1'",
+                timeout=done_timeout_ms,
+            )
+        except Exception:
+            try:
+                ready_val = await page.evaluate("() => document.body?.dataset?.ready ?? ''")
+                done_val = await page.evaluate("() => document.body?.dataset?.done ?? ''")
+            except Exception as snap_exc:
+                ready_val = f"(read failed: {snap_exc})"
+                done_val = ""
+
+            diag = "\n".join(
+                [
+                    f"{datetime.utcnow().isoformat()}Z",
+                    f"project_dir: {project_dir}",
+                    f"url: {url}",
+                    f"viewport: {settings.width}x{settings.height}",
+                    f"plan.total_duration: {plan.total_duration}",
+                    f"segment ends (max): {max((s.end for s in plan.segments), default=0)}",
+                    f"ready_timeout_ms: {ready_timeout}",
+                    f"done_timeout_ms: {done_timeout_ms}",
+                    f"dataset.ready at failure: {ready_val!r}",
+                    f"dataset.done at failure: {done_val!r}",
+                    "",
+                    "---- browser console (last 120) ----",
+                    *browser_lines[-120:],
+                    "",
+                    traceback.format_exc(),
+                ]
+            )
+            err_log.write_text(diag, encoding="utf-8")
+            console.print(f"[red]Playwright render failed — wrote {err_log.name}[/red]")
+            await page.close()
+            await ctx.close()
+            await browser.close()
+            raise
+
         await page.close()
         await ctx.close()
         await browser.close()
 
     webm_files = list(workdir.glob("*.webm"))
     if not webm_files:
-        raise RuntimeError("Playwright did not produce a video file.")
+        msg = "Playwright did not produce a video file."
+        err_log.write_text(
+            f"{datetime.utcnow().isoformat()}Z\n{msg}\n\n"
+            + "\n".join(browser_lines[-120:]),
+            encoding="utf-8",
+        )
+        raise RuntimeError(msg)
     return str(webm_files[-1])
 
 
@@ -117,7 +185,15 @@ def render_with_playwright(project_dir: Path, output_path: Path, plan: ScriptPla
         fps=settings.fps,
         duration=plan.total_duration,
     )
-    webm = asyncio.run(_record_with_playwright(project_dir, output_path, plan))
+    try:
+        webm = asyncio.run(_record_with_playwright(project_dir, output_path, plan))
+    except Exception as exc:
+        hint = f"{type(exc).__name__}: {exc}\nSee render_error.log in the run directory for browser console + dataset state."
+        job.log = hint
+        job.finished_at = datetime.utcnow()
+        console.print(f"[red]{hint}[/red]")
+        return job
+
     cmd = [
         "ffmpeg", "-y",
         "-i", webm,
@@ -130,7 +206,11 @@ def render_with_playwright(project_dir: Path, output_path: Path, plan: ScriptPla
     console.log(f"[cyan]$[/cyan] {' '.join(cmd)}")
     proc = subprocess.run(cmd, capture_output=True, text=True)
     job.log = proc.stdout + proc.stderr
-    job.success = output_path.exists()
+    if proc.returncode != 0:
+        fe = output_path.parent / "render_ffmpeg_error.log"
+        fe.write_text(job.log + "\n", encoding="utf-8")
+        console.print(f"[red]ffmpeg failed — wrote {fe.name}[/red]")
+    job.success = output_path.exists() and proc.returncode == 0
     job.finished_at = datetime.utcnow()
     return job
 

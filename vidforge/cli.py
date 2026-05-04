@@ -116,11 +116,19 @@ def auto(
     from .runner import VideoRun
 
     run_obj = VideoRun(script)
-    manifest = run_obj.execute(
-        duration=duration,
-        with_narration=not no_narration,
-        head=head,
-    )
+    try:
+        manifest = run_obj.execute(
+            duration=duration,
+            with_narration=not no_narration,
+            head=head,
+        )
+    except Exception:
+        rdir = run_obj.run_dir
+        console.print(
+            f"[yellow]Diagnostics: {rdir / 'pipeline_error.log'}, "
+            f"{rdir / 'render_error.log'}, {rdir / '_web_ui_error.txt'}[/yellow]"
+        )
+        raise
     if manifest.success:
         console.print(f"[bold green]\u2713 {manifest.final_video}[/bold green]")
     else:
@@ -139,12 +147,20 @@ def resume(
     from .runner import VideoRun
 
     run = VideoRun.from_run_dir(run_dir)
-    manifest = run.execute(
-        duration=duration,
-        with_narration=not no_narration,
-        head=head,
-        resume=True,
-    )
+    try:
+        manifest = run.execute(
+            duration=duration,
+            with_narration=not no_narration,
+            head=head,
+            resume=True,
+        )
+    except Exception:
+        rdir = run.run_dir
+        console.print(
+            f"[yellow]Diagnostics: {rdir / 'pipeline_error.log'}, "
+            f"{rdir / 'render_error.log'}, {rdir / '_web_ui_error.txt'}[/yellow]"
+        )
+        raise
     if manifest.success:
         console.print(f"[bold green]✓ resumed -> {manifest.final_video}[/bold green]")
     else:

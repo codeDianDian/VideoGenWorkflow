@@ -109,6 +109,22 @@ def _workbench_busy() -> bool:
         return False
 
 
+def _render_diagnostic_logs(run_dir: Path) -> None:
+    err_file = run_dir / "_web_ui_error.txt"
+    if err_file.exists():
+        st.error("流水线异常（完整 traceback）:\n```\n" + _read(err_file)[:12000] + "\n```")
+
+    for log_name, log_title in (
+        ("pipeline_error.log", "pipeline_error.log（历次崩溃追加）"),
+        ("render_error.log", "render_error.log（Playwright：dataset / 浏览器控制台）"),
+        ("render_ffmpeg_error.log", "render_ffmpeg_error.log（ffmpeg 转码）"),
+    ):
+        lp = run_dir / log_name
+        if lp.exists():
+            with st.expander(log_title):
+                st.code(_read(lp)[-24000:], language="text")
+
+
 def _render_pipeline_visual(run_dir: Path | None) -> None:
     if not run_dir or not run_dir.exists():
         st.caption("提交脚本后，这里会显示流水线进度。")
@@ -123,9 +139,7 @@ def _render_pipeline_visual(run_dir: Path | None) -> None:
         st.error(f"无法读取 manifest: {exc}")
         return
 
-    err_file = run_dir / "_web_ui_error.txt"
-    if err_file.exists():
-        st.error("后台线程异常:\n```\n" + _read(err_file)[:4000] + "\n```")
+    _render_diagnostic_logs(run_dir)
 
     n_ok = sum(1 for name, _ in PIPELINE_STEPS if (_stage_row_for(name, manifest) or {}).get("success"))
     st.progress(min(n_ok / len(PIPELINE_STEPS), 1.0), text=f"阶段进度 {n_ok}/{len(PIPELINE_STEPS)}")
@@ -165,9 +179,9 @@ def _start_background_run(
                 head=head,
                 resume=resume,
             )
-        except Exception as exc:  # noqa: BLE001
-            err = run.run_dir / "_web_ui_error.txt"
-            err.write_text(f"{type(exc).__name__}: {exc}", encoding="utf-8")
+        except Exception:
+            # runner.execute 已在 pipeline_error.log / _web_ui_error.txt 写入完整 traceback
+            pass
 
     threading.Thread(target=_go, daemon=True).start()
 
@@ -377,6 +391,8 @@ def _render_run_browser() -> None:
             )
             st.success(f"续跑已启动：`{selected.name}`。可在「工作台」查看进度。")
             st.rerun()
+
+    _render_diagnostic_logs(selected)
 
     n_ok = sum(1 for name, _ in PIPELINE_STEPS if (_stage_row_for(name, manifest) or {}).get("success"))
     st.progress(min(n_ok / len(PIPELINE_STEPS), 1.0), text=f"阶段 {n_ok}/{len(PIPELINE_STEPS)}")

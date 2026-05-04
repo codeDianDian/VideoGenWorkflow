@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     renderer: Literal["hyperframes", "playwright"] = "playwright"
     #: Playwright: max wait for ``document.body.dataset.ready === '1'`` before starting GSAP (ms).
     playwright_ready_timeout_ms: int = 120_000
+    #: Extra seconds added after max(plan.total_duration, last segment end) when waiting for dataset.done.
+    playwright_done_buffer_s: float = 120.0
+    #: Minimum ms for dataset.done wait (covers GSAP longer than plan, resume on slow machines).
+    playwright_done_timeout_floor_ms: int = 240_000
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
 
     build_dir: Path = PROJECT_ROOT / "build"

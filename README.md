@@ -47,7 +47,14 @@ or check VPN / firewall to `api.deepseek.com`.
 
 If **Playwright render** times out waiting for `dataset.ready`, set
 `VIDFORGE_PLAYWRIGHT_READY_TIMEOUT_MS` in `.env` (default **120000** ms; was 30s
-before).
+before). If it times out waiting for `dataset.done` (animation never finishes),
+raise `VIDFORGE_PLAYWRIGHT_DONE_BUFFER_S` and/or
+`VIDFORGE_PLAYWRIGHT_DONE_TIMEOUT_FLOOR_MS` — the renderer now uses
+`max(plan.total_duration, last segment end) + buffer` instead of `total_duration` alone.
+
+After a failed run, open **`pipeline_error.log`** (Python traceback) and
+**`render_error.log`** (browser `console`, `dataset.ready` / `dataset.done`) under
+`runs/<slug>/`. The Streamlit UI surfaces these in expanders under the progress area.
 
 Optional — for the **HyperFrames** renderer (the route shown in the original infographic):
 

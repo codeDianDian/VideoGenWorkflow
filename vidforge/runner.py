@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -210,6 +211,19 @@ class VideoRun:
             self._save()
         return result
 
+    def _append_pipeline_crash_log(self, exc: Exception) -> None:
+        """Persist full traceback for UI / CLI debugging (resume-friendly)."""
+        stamp = datetime.utcnow().isoformat() + "Z"
+        body = f"{stamp}\n{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}\n"
+        crash = self.run_dir / "pipeline_error.log"
+        sep = "\n" + ("=" * 72) + "\n"
+        if crash.exists():
+            crash.write_text(crash.read_text(encoding="utf-8") + sep + body, encoding="utf-8")
+        else:
+            crash.write_text(body, encoding="utf-8")
+        (self.run_dir / "_web_ui_error.txt").write_text(body, encoding="utf-8")
+        console.print(f"[red]pipeline error — see {crash.name} and _web_ui_error.txt[/red]")
+
     def execute(
         self,
         *,
@@ -239,103 +253,117 @@ class VideoRun:
         skip_narrate = head is not None or not with_narration
 
         try:
-            if not (
-                resume
-                and _should_skip_stage_on_resume(run_dir, self.manifest, "ingest", skip_narrate=skip_narrate)
-            ):
-                shutil.copy(self.script_path, run_dir / "script.md")
-                text = self._stage("ingest", lambda: ingest_stage.load_script(self.script_path))
-            else:
-                text = ingest_stage.load_script(run_dir / "script.md")
+            try:
+                if not (
+                    resume
+                    and _should_skip_stage_on_resume(
+                        run_dir, self.manifest, "ingest", skip_narrate=skip_narrate
+                    )
+                ):
+                    shutil.copy(self.script_path, run_dir / "script.md")
+                    text = self._stage("ingest", lambda: ingest_stage.load_script(self.script_path))
+                else:
+                    text = ingest_stage.load_script(run_dir / "script.md")
 
-            def _plan_fn():
-                p = plan_stage.plan_script(text, total_duration=duration)
-                plan_stage.save_plan(p, plan_path)
-                return plan_path
-
-            if not (
-                resume
-                and _should_skip_stage_on_resume(run_dir, self.manifest, "plan", skip_narrate=skip_narrate)
-            ):
-                self._stage("plan", _plan_fn)
-            plan = plan_stage.load_plan(plan_path)
-            self.manifest.title = plan.title
-
-            if not (
-                resume
-                and _should_skip_stage_on_resume(run_dir, self.manifest, "build", skip_narrate=skip_narrate)
-            ):
-                self._stage("build", lambda: build_stage.build_project(plan, project_dir))
-
-            def _render_fn():
-                job = render_stage.render(project_dir, anim_path, plan)
-                if not job.success:
-                    raise RuntimeError(f"render: {job.log[-500:]}")
-                return anim_path
-
-            if not (
-                resume
-                and _should_skip_stage_on_resume(run_dir, self.manifest, "render", skip_narrate=skip_narrate)
-            ):
-                self._stage("render", _render_fn)
-
-            narration_path: Path | None = None
-            if with_narration and head is None:
-                narration_path = run_dir / "narration.mp3"
-
-                def _narrate_fn():
-                    files = tts_stage.synth_segments(plan, out_dir=run_dir / "tts_segments")
-                    tts_stage.assemble_track(plan, files, narration_path)  # type: ignore[arg-type]
-                    return narration_path
+                def _plan_fn():
+                    p = plan_stage.plan_script(text, total_duration=duration)
+                    plan_stage.save_plan(p, plan_path)
+                    return plan_path
 
                 if not (
                     resume
                     and _should_skip_stage_on_resume(
-                        run_dir, self.manifest, "narrate", skip_narrate=skip_narrate
+                        run_dir, self.manifest, "plan", skip_narrate=skip_narrate
                     )
                 ):
-                    self._stage("narrate", _narrate_fn)
+                    self._stage("plan", _plan_fn)
+                plan = plan_stage.load_plan(plan_path)
+                self.manifest.title = plan.title
 
-            def _composite_fn():
-                if head is not None:
-                    composite_stage.composite_with_pip(anim_path, head, final_path)
-                else:
-                    composite_stage.composite_no_pip(anim_path, final_path, narration_mp3=narration_path)
-                return final_path
-
-            if not (
-                resume
-                and _should_skip_stage_on_resume(
-                    run_dir, self.manifest, "composite", skip_narrate=skip_narrate
-                )
-            ):
-                self._stage("composite", _composite_fn)
-
-            def _frames_fn():
-                frames_dir = run_dir / "frames"
-                frames_dir.mkdir(exist_ok=True)
-                for seg in plan.segments:
-                    t = (seg.start + seg.end) / 2
-                    out = frames_dir / f"scene_{seg.index:02d}.jpg"
-                    subprocess.run(
-                        [
-                            "ffmpeg", "-y", "-loglevel", "error",
-                            "-ss", str(t), "-i", str(final_path),
-                            "-frames:v", "1", "-q:v", "2", str(out),
-                        ],
-                        check=True,
+                if not (
+                    resume
+                    and _should_skip_stage_on_resume(
+                        run_dir, self.manifest, "build", skip_narrate=skip_narrate
                     )
-                return frames_dir
+                ):
+                    self._stage("build", lambda: build_stage.build_project(plan, project_dir))
 
-            if not (
-                resume
-                and _should_skip_stage_on_resume(run_dir, self.manifest, "frames", skip_narrate=skip_narrate)
-            ):
-                self._stage("frames", _frames_fn)
+                def _render_fn():
+                    job = render_stage.render(project_dir, anim_path, plan)
+                    if not job.success:
+                        raise RuntimeError(f"render: {job.log[-2000:]}")
+                    return anim_path
 
-            self.manifest.success = True
-            self.manifest.final_video = str(final_path)
-            self.manifest.duration_s = plan.total_duration
+                if not (
+                    resume
+                    and _should_skip_stage_on_resume(
+                        run_dir, self.manifest, "render", skip_narrate=skip_narrate
+                    )
+                ):
+                    self._stage("render", _render_fn)
+
+                narration_path: Path | None = None
+                if with_narration and head is None:
+                    narration_path = run_dir / "narration.mp3"
+
+                    def _narrate_fn():
+                        files = tts_stage.synth_segments(plan, out_dir=run_dir / "tts_segments")
+                        tts_stage.assemble_track(plan, files, narration_path)  # type: ignore[arg-type]
+                        return narration_path
+
+                    if not (
+                        resume
+                        and _should_skip_stage_on_resume(
+                            run_dir, self.manifest, "narrate", skip_narrate=skip_narrate
+                        )
+                    ):
+                        self._stage("narrate", _narrate_fn)
+
+                def _composite_fn():
+                    if head is not None:
+                        composite_stage.composite_with_pip(anim_path, head, final_path)
+                    else:
+                        composite_stage.composite_no_pip(anim_path, final_path, narration_mp3=narration_path)
+                    return final_path
+
+                if not (
+                    resume
+                    and _should_skip_stage_on_resume(
+                        run_dir, self.manifest, "composite", skip_narrate=skip_narrate
+                    )
+                ):
+                    self._stage("composite", _composite_fn)
+
+                def _frames_fn():
+                    frames_dir = run_dir / "frames"
+                    frames_dir.mkdir(exist_ok=True)
+                    for seg in plan.segments:
+                        t = (seg.start + seg.end) / 2
+                        out = frames_dir / f"scene_{seg.index:02d}.jpg"
+                        subprocess.run(
+                            [
+                                "ffmpeg", "-y", "-loglevel", "error",
+                                "-ss", str(t), "-i", str(final_path),
+                                "-frames:v", "1", "-q:v", "2", str(out),
+                            ],
+                            check=True,
+                        )
+                    return frames_dir
+
+                if not (
+                    resume
+                    and _should_skip_stage_on_resume(
+                        run_dir, self.manifest, "frames", skip_narrate=skip_narrate
+                    )
+                ):
+                    self._stage("frames", _frames_fn)
+
+                self.manifest.success = True
+                self.manifest.final_video = str(final_path)
+                self.manifest.duration_s = plan.total_duration
+            except Exception as exc:
+                self._append_pipeline_crash_log(exc)
+                raise
         finally:
             self.manifest.finished_at = datetime.utcnow()
             self._save()
