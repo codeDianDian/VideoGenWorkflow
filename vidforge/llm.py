@@ -17,13 +17,20 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from anthropic import RateLimitError as AnthropicRateLimitError
+from openai import APIConnectionError as OpenAIAPIConnectionError
 from openai import APIStatusError as OpenAIAPIStatusError
+from openai import APITimeoutError as OpenAIAPITimeoutError
 from openai import RateLimitError as OpenAIRateLimitError
 from pydantic import BaseModel, ValidationError
 from rich.console import Console
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from .config import settings
+
+# OpenAI SDK defaults are tight; long JSON + overseas TLS often needs more headroom
+# or requests fail with APIConnectionError.
+_LLM_HTTP_TIMEOUT_S = 180.0
+_LLM_MAX_OPENAI_RETRIES = 5
 
 T = TypeVar("T", bound=BaseModel)
 console = Console()
@@ -66,7 +73,11 @@ def _ask_anthropic(system: str, user: str, max_tokens: int) -> str:
 
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY missing")
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = Anthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=_LLM_HTTP_TIMEOUT_S,
+        max_retries=_LLM_MAX_OPENAI_RETRIES,
+    )
     msg = client.messages.create(
         model=settings.llm_model,
         max_tokens=max_tokens,
@@ -81,7 +92,7 @@ def _ask_openai(system: str, user: str, max_tokens: int) -> str:
 
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY missing")
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = OpenAI(api_key=settings.openai_api_key, timeout=_LLM_HTTP_TIMEOUT_S, max_retries=_LLM_MAX_OPENAI_RETRIES)
     rsp = client.chat.completions.create(
         model=settings.llm_model,
         max_tokens=max_tokens,
@@ -98,10 +109,9 @@ def _ask_deepseek(system: str, user: str, max_tokens: int) -> str:
     """DeepSeek speaks the OpenAI chat-completions protocol verbatim, so we
     reuse the OpenAI SDK and only swap the base URL + key.
 
-    Default model: ``deepseek-v4-pro``; use ``deepseek-v4-flash`` for lower
-    latency/cost. Legacy ``deepseek-chat`` / ``deepseek-reasoner`` names are
-    being retired — see DeepSeek API release notes. Uses
-    ``response_format={"type": "json_object"}``.
+    Typical model: ``deepseek-v4-flash`` (fast) or ``deepseek-v4-pro`` (quality).
+    Legacy ``deepseek-chat`` / ``deepseek-reasoner`` names are being retired —
+    see DeepSeek API release notes. Uses ``response_format={"type": "json_object"}``.
     """
     from openai import OpenAI
 
@@ -110,6 +120,8 @@ def _ask_deepseek(system: str, user: str, max_tokens: int) -> str:
     client = OpenAI(
         api_key=settings.deepseek_api_key,
         base_url=settings.deepseek_base_url,
+        timeout=_LLM_HTTP_TIMEOUT_S,
+        max_retries=_LLM_MAX_OPENAI_RETRIES,
     )
     rsp = client.chat.completions.create(
         model=settings.llm_model,
@@ -138,7 +150,15 @@ def _cache_key(system: str, full_user: str, schema: str) -> str:
 
 
 def _is_retryable_llm_transport_error(exc: BaseException) -> bool:
-    if isinstance(exc, (OpenAIRateLimitError, AnthropicRateLimitError)):
+    if isinstance(
+        exc,
+        (
+            OpenAIRateLimitError,
+            AnthropicRateLimitError,
+            OpenAIAPIConnectionError,
+            OpenAIAPITimeoutError,
+        ),
+    ):
         return True
     if isinstance(exc, OpenAIAPIStatusError) and exc.status_code == 429:
         return True

@@ -38,6 +38,11 @@ If the UI still shows OpenAI / GPT, your `.env` probably still has
 `VIDFORGE_LLM_PROVIDER=openai` from an old install — change it to `deepseek` or
 remove `OPENAI_API_KEY` when you only use DeepSeek (the app will then prefer
 DeepSeek when a DeepSeek key is present and the other vendor’s key is absent).
+
+Default model is **`deepseek-v4-flash`** for lower latency; set
+`VIDFORGE_LLM_MODEL=deepseek-v4-pro` if you prefer the slower flagship. If you
+see `APIConnectionError`, update to the latest `vidforge` (longer HTTP timeouts)
+or check VPN / firewall to `api.deepseek.com`.
 ```
 
 Optional — for the **HyperFrames** renderer (the route shown in the original infographic):

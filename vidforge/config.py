@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     )
 
     llm_provider: Literal["anthropic", "openai", "deepseek"] = "deepseek"
-    llm_model: str = "deepseek-v4-pro"
+    llm_model: str = "deepseek-v4-flash"
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     deepseek_api_key: str | None = Field(
@@ -67,11 +67,11 @@ class Settings(BaseSettings):
             self.llm_provider = "deepseek"
             lm = (self.llm_model or "").lower()
             if "gpt" in lm or lm.startswith("o1") or lm.startswith("o3"):
-                self.llm_model = "deepseek-v4-pro"
+                self.llm_model = "deepseek-v4-flash"
         if self.llm_provider == "anthropic" and not self.anthropic_api_key:
             self.llm_provider = "deepseek"
             if "claude" in (self.llm_model or "").lower():
-                self.llm_model = "deepseek-v4-pro"
+                self.llm_model = "deepseek-v4-flash"
         return self
 
     def ensure_dirs(self) -> None:
