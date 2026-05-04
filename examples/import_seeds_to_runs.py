@@ -26,7 +26,8 @@ def import_seed(name: str) -> None:
     run = VideoRun.from_title(plan.title)
     print(f"\u25b6  importing {name} \u2192 {run.run_dir}")
     manifest = run.execute_seeded(plan, scenes, theme_css=theme)
-    print(f"   {'\u2713' if manifest.success else '\u2717'}  {manifest.final_video}")
+    mark = "\u2713" if manifest.success else "\u2717"
+    print(f"   {mark}  {manifest.final_video}")
 
 
 def main(seed: str) -> None:

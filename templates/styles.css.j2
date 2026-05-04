@@ -44,7 +44,7 @@ html, body {
   opacity: 1;
 }
 
-#subtitle {
+#vf-subtitle {
   position: absolute;
   left: 60px;
   right: 60px;
@@ -85,3 +85,14 @@ html, body {
 }
 
 {{ scene_styles }}
+
+/* Generated scene CSS often targets `.scene-N` directly. Keep the root scene
+   layers locked to the stage so those rules cannot push active scenes below
+   the viewport. */
+.scene {
+  position: absolute !important;
+  inset: 0 !important;
+  width: var(--stage-w) !important;
+  height: var(--stage-h) !important;
+  margin: 0 !important;
+}

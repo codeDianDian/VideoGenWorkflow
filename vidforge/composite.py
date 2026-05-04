@@ -75,7 +75,19 @@ def composite_no_pip(
     cmd: list[str] = [_ffmpeg(), "-y", "-i", str(animation_mp4)]
     if narration_mp3:
         cmd += ["-i", str(narration_mp3)]
-        cmd += ["-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-shortest"]
+        cmd += [
+            "-filter_complex",
+            "[1:a]apad[aout]",
+            "-map",
+            "0:v",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+        ]
     else:
         cmd += ["-c:v", "copy", "-an"]
     cmd += [str(output_path)]

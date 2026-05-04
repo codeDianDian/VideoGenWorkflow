@@ -50,9 +50,33 @@ def _inline_preview_html(project_dir: Path) -> str:
         '<link rel="stylesheet" href="./styles.css" />',
         f"<style>{css}</style>",
     )
+    preview_boot = """
+<script>
+(function () {
+  function showPreviewError(message) {
+    var box = document.createElement("div");
+    box.style.cssText = "position:fixed;left:24px;right:24px;top:24px;z-index:9999;padding:18px 22px;background:#7f1d1d;color:white;font:28px sans-serif;border-radius:8px;";
+    box.textContent = message;
+    document.body.appendChild(box);
+  }
+  function startPreview() {
+    if (!window.gsap) {
+      showPreviewError("GSAP 加载失败，场景预览无法播放。请检查网络或改成本地 GSAP。");
+      return;
+    }
+    if (window.__startVideo) window.__startVideo();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { requestAnimationFrame(startPreview); });
+  } else {
+    requestAnimationFrame(startPreview);
+  }
+})();
+</script>
+"""
     html = html.replace(
         '<script src="./main.js"></script>',
-        f"<script>{js}</script>",
+        f"<script>{js}</script>{preview_boot}",
     )
     return html
 

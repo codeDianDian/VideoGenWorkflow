@@ -38,10 +38,17 @@ def plan_script(
 ) -> ScriptPlan:
     duration = total_duration or settings.default_duration
     plan = ask_json(PLANNER_SYSTEM, _planner_user(script_text, duration, language_hint), ScriptPlan)
-    plan.total_duration = duration
+    source_tail = max((seg.end for seg in plan.segments), default=float(plan.total_duration))
+    source_duration = max(float(plan.total_duration), float(source_tail), 0.1)
+    if abs(source_duration - float(duration)) > 0.01:
+        scale = float(duration) / source_duration
+        for seg in plan.segments:
+            seg.start = round(seg.start * scale, 3)
+            seg.end = round(seg.end * scale, 3)
+    plan.total_duration = float(duration)
     for i, seg in enumerate(plan.segments):
         seg.index = i
-    return plan
+    return ScriptPlan.model_validate(plan.model_dump())
 
 
 def save_plan(plan: ScriptPlan, path: Path | None = None) -> Path:

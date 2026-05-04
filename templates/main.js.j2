@@ -1,6 +1,6 @@
 (function () {
   const cfg = window.__VIDFORGE__;
-  const subtitleEl = document.getElementById("subtitle");
+  const subtitleEl = document.getElementById("vf-subtitle");
   const progressEl = document.getElementById("progress");
 
   function buildSceneTimeline(segIndex, root) {
@@ -18,7 +18,12 @@
   const master = gsap.timeline({ paused: true });
 
   cfg.segments.forEach((seg, i) => {
-    const root = document.querySelector(".scene-" + i);
+    const segIndex = Number(seg.index ?? i);
+    const root = document.querySelector(".scene-" + segIndex);
+    if (!root) {
+      console.error("Missing scene root for segment", segIndex);
+      return;
+    }
     master.add(function () {
       document.querySelectorAll(".scene").forEach(function (el) { el.classList.remove("is-active"); });
       root.classList.add("is-active");
@@ -26,7 +31,7 @@
       subtitleEl.textContent = seg.subtitle;
     }, seg.start);
 
-    const sceneTl = buildSceneTimeline(i, root);
+    const sceneTl = buildSceneTimeline(segIndex, root);
     master.add(sceneTl, seg.start);
 
     master.add(function () {
@@ -47,7 +52,8 @@
   /* First frame before GSAP callbacks run: parent opacity 0 hides all children, so show scene 0. */
   (function primeInitialScene() {
     if (!cfg.segments.length) return;
-    var root = document.querySelector(".scene-0");
+    var first = cfg.segments[0];
+    var root = document.querySelector(".scene-" + Number(first.index ?? 0));
     if (!root) return;
     document.querySelectorAll(".scene").forEach(function (el) {
       el.classList.remove("is-active");

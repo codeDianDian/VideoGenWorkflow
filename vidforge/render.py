@@ -10,6 +10,7 @@ Both backends honour the project's stage size and total duration.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import subprocess
 import traceback
@@ -64,7 +65,7 @@ def render_with_hyperframes(project_dir: Path, output_path: Path, plan: ScriptPl
         "--duration", f"{plan.total_duration}",
         "--quality", "high",
     ]
-    env = {"LIBTV_ACCESS_KEY": settings.libtv_access_key}
+    env = {**os.environ, "LIBTV_ACCESS_KEY": settings.libtv_access_key or ""}
     log_lines: list[str] = []
     for cmd in (cmd_lint, cmd_render):
         console.log(f"[cyan]$[/cyan] {' '.join(cmd)}")
@@ -84,7 +85,8 @@ def render_with_hyperframes(project_dir: Path, output_path: Path, plan: ScriptPl
 async def _record_with_playwright(project_dir: Path, output_path: Path, plan: ScriptPlan) -> str:
     from playwright.async_api import async_playwright
 
-    workdir = output_path.parent / "_pw"
+    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    workdir = output_path.parent / "_pw" / f"{output_path.stem}_{stamp}"
     workdir.mkdir(parents=True, exist_ok=True)
 
     err_log = output_path.parent / "render_error.log"

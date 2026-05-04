@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 SceneType = Literal[
     "hook",        # 0-3s opening
@@ -31,6 +31,14 @@ class Segment(BaseModel):
     def duration(self) -> float:
         return max(0.1, self.end - self.start)
 
+    @model_validator(mode="after")
+    def _validate_time_window(self) -> "Segment":
+        if self.start < 0:
+            raise ValueError("segment start must be >= 0")
+        if self.end <= self.start:
+            raise ValueError("segment end must be greater than start")
+        return self
+
 
 class ScriptPlan(BaseModel):
     title: str
@@ -38,6 +46,32 @@ class ScriptPlan(BaseModel):
     total_duration: float
     aspect: str = "9:16"
     segments: list[Segment]
+
+    @model_validator(mode="after")
+    def _validate_timeline(self) -> "ScriptPlan":
+        if self.total_duration <= 0:
+            raise ValueError("total_duration must be > 0")
+        if not self.segments:
+            raise ValueError("segments must not be empty")
+
+        prev_start = -1.0
+        prev_end = 0.0
+        for seg in self.segments:
+            if seg.start < prev_start:
+                raise ValueError("segment starts must be monotonically increasing")
+            if seg.start < prev_end - 0.05:
+                raise ValueError("segments must not overlap")
+            prev_start = seg.start
+            prev_end = seg.end
+
+        first = self.segments[0]
+        last = self.segments[-1]
+        tolerance = max(1.0, self.total_duration * 0.05)
+        if first.start > 0.5:
+            raise ValueError("timeline should start near 0s")
+        if abs(last.end - self.total_duration) > tolerance:
+            raise ValueError("last segment end should be close to total_duration")
+        return self
 
 
 class SceneCode(BaseModel):

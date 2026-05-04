@@ -103,7 +103,9 @@ def _stage_artifacts_ok(run_dir: Path, stage_name: str, *, skip_narrate: bool) -
     if stage_name == "narrate":
         return (run_dir / "narration.mp3").exists()
     if stage_name == "composite":
-        return (run_dir / "final.mp4").exists()
+        # Composite depends on runtime inputs (PIP upload, narration toggle/audio).
+        # Re-run it on resume so a valid-but-stale final.mp4 is never reused.
+        return False
     if stage_name == "frames":
         fd = run_dir / "frames"
         return fd.is_dir() and any(fd.glob("*.jpg"))
