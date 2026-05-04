@@ -26,6 +26,20 @@ _DEFAULT_BUILD_CONCURRENCY = 6
 
 console = Console()
 
+
+def _sanitize_scene_js(js: str) -> str:
+    """Fix common LLM mistakes that break the page before dataset.ready is set."""
+    # Model sometimes emits `var tl = window.tl` but only closure `tl` exists → tl is undefined, fromTo crashes.
+    js = re.sub(
+        r"\b(?:var|let|const)\s+tl\s*=\s*window\.tl\s*;?",
+        "",
+        js,
+    )
+    js = js.replace("window.tl", "tl")
+    js = re.sub(r"\bwindow\.timeline\b", "tl", js)
+    return js
+
+
 SCENE_SYSTEM = (
     "You are a senior front-end engineer who specialises in GSAP-driven motion graphics for short videos. "
     "You write production-quality HTML/CSS/JS that renders deterministically (no random, no setTimeout). "
@@ -53,6 +67,7 @@ def _scene_user(seg: Segment, plan: ScriptPlan) -> str:
         "- Never write to the bottom 380px (PIP safe zone) or the bottom 60px (subtitle bar).\n"
         "- The JS body runs inside an IIFE with `tl` (a paused gsap.timeline()) and `root` (the scene element) in scope. "
         f"Add tweens that together last <= {seg.duration:.2f}s. Do NOT call tl.play() yourself.\n"
+        "- NEVER reassign tl from globals (e.g. window.tl does not exist) — only use the injected `tl`.\n"
         "- Prefer 1-3 large visual elements with staggered entrances. Strong typography wins.\n"
     )
 
@@ -67,6 +82,7 @@ def generate_scene(seg: Segment, plan: ScriptPlan) -> SceneCode:
     # master timeline from ever calling onComplete — clamp defensively.
     code.js = re.sub(r"repeat\s*:\s*-1\b", "repeat: 1", code.js)
     code.js = re.sub(r"repeat\s*:\s*Infinity\b", "repeat: 1", code.js, flags=re.I)
+    code.js = _sanitize_scene_js(code.js)
     return code
 
 
