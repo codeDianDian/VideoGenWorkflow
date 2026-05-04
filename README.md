@@ -97,10 +97,12 @@ build/
 vidforge ui
 # 或
 streamlit run vidforge/ui.py
+# 从命令行续跑某个未完成的 run 目录（与 UI「从断点继续」相同逻辑）
+vidforge resume runs/20260504-193333__your_script -d 30
 ```
 
 - **工作台**：粘贴 Markdown 脚本、设置目标秒数、可选自动配音与口播 PIP（mp4）。任务在后台线程执行，页面每 2 秒轮询 `runs/<slug>/manifest.json` 更新阶段条与状态。
-- **运行记录**：浏览历史 run，查看分镜 JSON、内嵌场景预览、关键帧与清单日志。
+- **运行记录**：浏览历史 run，查看分镜 JSON、内嵌场景预览、关键帧与清单日志；**未成功的 run 可从断点续跑**（跳过已成功阶段，新阶段追加进 `manifest.json`）。
 
 ---
 

@@ -129,6 +129,30 @@ def auto(
 
 
 @app.command()
+def resume(
+    run_dir: Path,
+    duration: int = typer.Option(None, "--duration", "-d", help="Target duration if re-running the plan stage"),
+    head: Optional[Path] = typer.Option(None, "--head"),
+    no_narration: bool = typer.Option(False, "--no-narration"),
+) -> None:
+    """Continue a failed or partial run: skip stages that already succeeded (see manifest + on-disk artifacts)."""
+    from .runner import VideoRun
+
+    run = VideoRun.from_run_dir(run_dir)
+    manifest = run.execute(
+        duration=duration,
+        with_narration=not no_narration,
+        head=head,
+        resume=True,
+    )
+    if manifest.success:
+        console.print(f"[bold green]✓ resumed -> {manifest.final_video}[/bold green]")
+    else:
+        console.print(f"[red]resume failed — see {run.run_dir / 'manifest.json'}[/red]")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def watch() -> None:
     """Daemon: watch inbox/ and process every .md/.txt/.pdf dropped in."""
     from .watcher import watch as _watch

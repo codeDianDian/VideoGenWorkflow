@@ -4,7 +4,8 @@ Run: `vidforge ui` (or `streamlit run vidforge/ui.py`).
 
 Tabs:
   * **工作台** — paste a script, start the full pipeline, watch stage progress live.
-  * **运行记录** — inspect past runs under `runs/` (same as the original dashboard).
+  * **运行记录** — inspect past runs under `runs/`; **resume** partial/failed runs
+    from the last successful stage (manifest history preserved).
 
 The workbench runs `VideoRun.execute()` in a background thread so Streamlit stays
 responsive; progress is read from `runs/<slug>/manifest.json` on poll.
@@ -79,10 +80,33 @@ def _stage_table_rows(stages):
 
 
 def _stage_row_for(step_en: str, manifest) -> dict | None:
-    for s in manifest.stages:
+    for s in reversed(manifest.stages):
         if s.name == step_en:
             return {"success": s.success, "error": s.error, "elapsed": s.elapsed_s}
     return None
+
+
+def _default_duration_for_run(run_path: Path) -> int:
+    seg = run_path / "segments.json"
+    if seg.exists():
+        try:
+            data = json.loads(_read(seg))
+            v = data.get("total_duration")
+            if v is not None:
+                return max(15, min(180, int(float(v))))
+        except Exception:
+            pass
+    return 30
+
+
+def _workbench_busy() -> bool:
+    wr = st.session_state.get("web_poll_run_dir")
+    if not wr or not Path(wr).exists():
+        return False
+    try:
+        return load_manifest(Path(wr)).finished_at is None
+    except Exception:
+        return False
 
 
 def _render_pipeline_visual(run_dir: Path | None) -> None:
@@ -125,10 +149,22 @@ def _render_pipeline_visual(run_dir: Path | None) -> None:
             st.code(_read(log_path)[:8000], language="text")
 
 
-def _start_background_run(run: VideoRun, duration: int | None, with_narration: bool, head: Path | None) -> None:
+def _start_background_run(
+    run: VideoRun,
+    duration: int | None,
+    with_narration: bool,
+    head: Path | None,
+    *,
+    resume: bool = False,
+) -> None:
     def _go() -> None:
         try:
-            run.execute(duration=duration, with_narration=with_narration, head=head)
+            run.execute(
+                duration=duration,
+                with_narration=with_narration,
+                head=head,
+                resume=resume,
+            )
         except Exception as exc:  # noqa: BLE001
             err = run.run_dir / "_web_ui_error.txt"
             err.write_text(f"{type(exc).__name__}: {exc}", encoding="utf-8")
@@ -210,14 +246,7 @@ def _render_workbench() -> None:
         head_up = st.file_uploader("口播视频 PIP（可选, mp4）", type=["mp4"])
 
     run_dir_str = st.session_state.web_poll_run_dir
-    busy = False
-    if run_dir_str and Path(run_dir_str).exists():
-        mp = Path(run_dir_str) / "manifest.json"
-        if mp.exists():
-            try:
-                busy = load_manifest(Path(run_dir_str)).finished_at is None
-            except Exception:
-                busy = False
+    busy = _workbench_busy()
 
     b1, b2 = st.columns(2)
     with b1:
@@ -245,7 +274,7 @@ def _render_workbench() -> None:
             head_path.write_bytes(head_up.getvalue())
 
         st.session_state.web_poll_run_dir = str(run.run_dir)
-        _start_background_run(run, int(duration), with_narration=with_audio, head=head_path)
+        _start_background_run(run, int(duration), with_narration=with_audio, head=head_path, resume=False)
         st.success(f"任务已启动: `{run.run_dir.name}`")
         st.rerun()
 
@@ -294,6 +323,60 @@ def _render_run_browser() -> None:
     head_cols[1].metric("status", "\u2713 done" if manifest.success else "running/failed")
     head_cols[2].metric("duration", _format_seconds(manifest.duration_s))
     head_cols[3].metric("stages", len(manifest.stages))
+
+    if not manifest.success:
+        st.info(
+            "该 run 未完成。可从已成功且磁盘产物齐全的阶段之后**续跑**；新阶段会追加写入 "
+            "`manifest.json`（保留历史记录）。续跑开始后也可在「工作台」查看同一目录进度。"
+        )
+        busy_wb = _workbench_busy()
+        rdur = _default_duration_for_run(selected)
+        r1, r2 = st.columns(2)
+        with r1:
+            resume_dur = st.number_input(
+                "续跑：规划时长（秒，仅当重跑「plan」时生效）",
+                min_value=15,
+                max_value=180,
+                value=rdur,
+                step=5,
+                key=f"resume_dur_{selected.name}",
+                disabled=busy_wb,
+            )
+        with r2:
+            resume_audio = st.toggle(
+                "续跑：自动配音（无 PIP 时）",
+                value=True,
+                key=f"resume_aud_{selected.name}",
+                disabled=busy_wb,
+            )
+        resume_head = st.file_uploader(
+            "续跑：口播 PIP（可选，覆盖/新上传）",
+            type=["mp4"],
+            key=f"resume_head_{selected.name}",
+            disabled=busy_wb,
+        )
+        if st.button(
+            "从断点继续（后台）",
+            type="primary",
+            key=f"resume_btn_{selected.name}",
+            disabled=busy_wb,
+            help="复用 manifest 中已成功的阶段；若磁盘上缺少对应产物则会自动重跑该阶段。",
+        ):
+            run = VideoRun.from_run_dir(selected)
+            head_p: Path | None = None
+            if resume_head is not None:
+                head_p = run.run_dir / "uploaded_talking_head.mp4"
+                head_p.write_bytes(resume_head.getvalue())
+            st.session_state.web_poll_run_dir = str(selected)
+            _start_background_run(
+                run,
+                int(resume_dur),
+                with_narration=resume_audio,
+                head=head_p,
+                resume=True,
+            )
+            st.success(f"续跑已启动：`{selected.name}`。可在「工作台」查看进度。")
+            st.rerun()
 
     n_ok = sum(1 for name, _ in PIPELINE_STEPS if (_stage_row_for(name, manifest) or {}).get("success"))
     st.progress(min(n_ok / len(PIPELINE_STEPS), 1.0), text=f"阶段 {n_ok}/{len(PIPELINE_STEPS)}")

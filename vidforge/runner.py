@@ -75,6 +75,53 @@ def _slug_for(script_path: Path) -> str:
     return f"{ts}__{base}"
 
 
+def latest_stage_result(manifest: RunManifest, name: str) -> StageResult | None:
+    """Most recent entry for a stage name (supports multiple attempts after resume)."""
+    for s in reversed(manifest.stages):
+        if s.name == name:
+            return s
+    return None
+
+
+def _stage_artifacts_ok(run_dir: Path, stage_name: str, *, skip_narrate: bool) -> bool:
+    if stage_name == "narrate" and skip_narrate:
+        return True
+    if stage_name == "ingest":
+        return (run_dir / "script.md").exists()
+    if stage_name == "plan":
+        return (run_dir / "segments.json").exists()
+    if stage_name == "build":
+        p = run_dir / "project"
+        return (
+            (p / "index.html").exists()
+            and (p / "main.js").exists()
+            and (p / "styles.css").exists()
+        )
+    if stage_name == "render":
+        return (run_dir / "animation.mp4").exists()
+    if stage_name == "narrate":
+        return (run_dir / "narration.mp3").exists()
+    if stage_name == "composite":
+        return (run_dir / "final.mp4").exists()
+    if stage_name == "frames":
+        fd = run_dir / "frames"
+        return fd.is_dir() and any(fd.glob("*.jpg"))
+    return False
+
+
+def _should_skip_stage_on_resume(
+    run_dir: Path,
+    manifest: RunManifest,
+    stage_name: str,
+    *,
+    skip_narrate: bool,
+) -> bool:
+    rec = latest_stage_result(manifest, stage_name)
+    if rec is None or not rec.success or rec.finished_at is None:
+        return False
+    return _stage_artifacts_ok(run_dir, stage_name, skip_narrate=skip_narrate)
+
+
 class VideoRun:
     """One pipeline invocation, isolated in its own folder."""
 
@@ -95,6 +142,30 @@ class VideoRun:
             started_at=datetime.utcnow(),
         )
         self._save()
+
+    @classmethod
+    def from_run_dir(cls, run_dir: Path) -> "VideoRun":
+        """Re-open an existing run folder (manifest + artifacts). Used for resume."""
+        run_dir = Path(run_dir).expanduser().resolve()
+        mf = run_dir / "manifest.json"
+        if not mf.exists():
+            raise FileNotFoundError(f"No manifest.json in {run_dir}")
+        manifest = load_manifest(run_dir)
+        inst = object.__new__(cls)
+        inst.run_dir = run_dir
+        inst.slug = manifest.slug or run_dir.name
+        raw = Path(manifest.script_path).expanduser().resolve()
+        if raw.exists():
+            inst.script_path = raw
+        else:
+            fb = run_dir / "script.md"
+            if not fb.exists():
+                raise FileNotFoundError(
+                    f"Original script missing ({manifest.script_path!r}) and no {fb.name} in run folder"
+                )
+            inst.script_path = fb
+        inst.manifest = manifest
+        return inst
 
     @classmethod
     def from_title(cls, title: str) -> "VideoRun":
@@ -145,27 +216,56 @@ class VideoRun:
         duration: int | None = None,
         with_narration: bool = True,
         head: Path | None = None,
+        resume: bool = False,
     ) -> RunManifest:
+        run_dir = self.run_dir
+        plan_path = run_dir / "segments.json"
+        project_dir = run_dir / "project"
+        anim_path = run_dir / "animation.mp4"
+        final_path = run_dir / "final.mp4"
+
+        if resume:
+            self.manifest = load_manifest(run_dir)
+            self.manifest.finished_at = None
+            self.manifest.success = False
+            self.manifest.final_video = None
+            self.manifest.duration_s = None
+            err_ui = run_dir / "_web_ui_error.txt"
+            if err_ui.exists():
+                err_ui.unlink()
+            if head is None and (run_dir / "uploaded_talking_head.mp4").exists():
+                head = run_dir / "uploaded_talking_head.mp4"
+
+        skip_narrate = head is not None or not with_narration
+
         try:
-            shutil.copy(self.script_path, self.run_dir / "script.md")
-
-            text: str = self._stage("ingest", lambda: ingest_stage.load_script(self.script_path))
-
-            plan_path = self.run_dir / "segments.json"
+            if not (
+                resume
+                and _should_skip_stage_on_resume(run_dir, self.manifest, "ingest", skip_narrate=skip_narrate)
+            ):
+                shutil.copy(self.script_path, run_dir / "script.md")
+                text = self._stage("ingest", lambda: ingest_stage.load_script(self.script_path))
+            else:
+                text = ingest_stage.load_script(run_dir / "script.md")
 
             def _plan_fn():
                 p = plan_stage.plan_script(text, total_duration=duration)
                 plan_stage.save_plan(p, plan_path)
                 return plan_path
 
-            self._stage("plan", _plan_fn)
+            if not (
+                resume
+                and _should_skip_stage_on_resume(run_dir, self.manifest, "plan", skip_narrate=skip_narrate)
+            ):
+                self._stage("plan", _plan_fn)
             plan = plan_stage.load_plan(plan_path)
             self.manifest.title = plan.title
 
-            project_dir = self.run_dir / "project"
-            self._stage("build", lambda: build_stage.build_project(plan, project_dir))
-
-            anim_path = self.run_dir / "animation.mp4"
+            if not (
+                resume
+                and _should_skip_stage_on_resume(run_dir, self.manifest, "build", skip_narrate=skip_narrate)
+            ):
+                self._stage("build", lambda: build_stage.build_project(plan, project_dir))
 
             def _render_fn():
                 job = render_stage.render(project_dir, anim_path, plan)
@@ -173,20 +273,28 @@ class VideoRun:
                     raise RuntimeError(f"render: {job.log[-500:]}")
                 return anim_path
 
-            self._stage("render", _render_fn)
+            if not (
+                resume
+                and _should_skip_stage_on_resume(run_dir, self.manifest, "render", skip_narrate=skip_narrate)
+            ):
+                self._stage("render", _render_fn)
 
             narration_path: Path | None = None
             if with_narration and head is None:
-                narration_path = self.run_dir / "narration.mp3"
+                narration_path = run_dir / "narration.mp3"
 
                 def _narrate_fn():
-                    files = tts_stage.synth_segments(plan, out_dir=self.run_dir / "tts_segments")
+                    files = tts_stage.synth_segments(plan, out_dir=run_dir / "tts_segments")
                     tts_stage.assemble_track(plan, files, narration_path)  # type: ignore[arg-type]
                     return narration_path
 
-                self._stage("narrate", _narrate_fn)
-
-            final_path = self.run_dir / "final.mp4"
+                if not (
+                    resume
+                    and _should_skip_stage_on_resume(
+                        run_dir, self.manifest, "narrate", skip_narrate=skip_narrate
+                    )
+                ):
+                    self._stage("narrate", _narrate_fn)
 
             def _composite_fn():
                 if head is not None:
@@ -195,10 +303,16 @@ class VideoRun:
                     composite_stage.composite_no_pip(anim_path, final_path, narration_mp3=narration_path)
                 return final_path
 
-            self._stage("composite", _composite_fn)
+            if not (
+                resume
+                and _should_skip_stage_on_resume(
+                    run_dir, self.manifest, "composite", skip_narrate=skip_narrate
+                )
+            ):
+                self._stage("composite", _composite_fn)
 
             def _frames_fn():
-                frames_dir = self.run_dir / "frames"
+                frames_dir = run_dir / "frames"
                 frames_dir.mkdir(exist_ok=True)
                 for seg in plan.segments:
                     t = (seg.start + seg.end) / 2
@@ -213,7 +327,11 @@ class VideoRun:
                     )
                 return frames_dir
 
-            self._stage("frames", _frames_fn)
+            if not (
+                resume
+                and _should_skip_stage_on_resume(run_dir, self.manifest, "frames", skip_narrate=skip_narrate)
+            ):
+                self._stage("frames", _frames_fn)
 
             self.manifest.success = True
             self.manifest.final_video = str(final_path)
