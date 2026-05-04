@@ -1,0 +1,85 @@
+:root {
+  --stage-w: {{ width }}px;
+  --stage-h: {{ height }}px;
+  --bg: #0e1116;
+  --fg: #f6f7fb;
+  --accent: #4f8cff;
+  --muted: #9aa3b2;
+  --safe-bottom: 380px;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  color: var(--fg);
+  overflow: hidden;
+}
+
+#stage {
+  position: relative;
+  width: var(--stage-w);
+  height: var(--stage-h);
+  margin: 0 auto;
+  background: linear-gradient(160deg, #0c1118 0%, #161c26 100%);
+  overflow: hidden;
+}
+
+.scene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  padding: 96px 80px var(--safe-bottom);
+  box-sizing: border-box;
+}
+
+.scene.is-active {
+  visibility: visible;
+}
+
+#subtitle {
+  position: absolute;
+  left: 60px;
+  right: 60px;
+  bottom: 240px;
+  font-size: 56px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.25;
+  text-shadow: 0 4px 24px rgba(0,0,0,0.6);
+  letter-spacing: 0.02em;
+}
+
+#pip-safe-zone {
+  position: absolute;
+  right: 48px;
+  bottom: 48px;
+  width: 360px;
+  height: 360px;
+  border-radius: 24px;
+  border: 2px dashed rgba(255,255,255,0.15);
+  pointer-events: none;
+}
+
+#progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+}
+#progress::after {
+  content: "";
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+}
+
+{{ scene_styles }}

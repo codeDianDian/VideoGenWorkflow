@@ -1,0 +1,30 @@
+[project]
+name = "vidforge"
+version = "0.1.0"
+description = "Script -> structured shot list -> HTML/GSAP animation -> rendered MP4 -> final composite. Inspired by the Codex x HyperFrames workflow."
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.34",
+    "openai>=1.40",
+    "jinja2>=3.1",
+    "edge-tts>=6.1",
+    "pdfplumber>=0.11",
+    "playwright>=1.46",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "python-dotenv>=1.0",
+    "rich>=13.7",
+    "tenacity>=8.5",
+    "typer>=0.12",
+    "streamlit>=1.36",
+]
+
+[project.scripts]
+vidforge = "vidforge.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["vidforge*"]

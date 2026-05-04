@@ -1,0 +1,55 @@
+(function () {
+  const cfg = window.__VIDFORGE__;
+  const subtitleEl = document.getElementById("subtitle");
+  const progressEl = document.getElementById("progress");
+
+  function buildSceneTimeline(segIndex, root) {
+    const tl = gsap.timeline();
+    {% for seg in plan.segments %}
+    if (segIndex === {{ seg.index }}) {
+      (function () {
+        {{ scenes[seg.index].js | indent(8) }}
+      })();
+    }
+    {% endfor %}
+    return tl;
+  }
+
+  const master = gsap.timeline({ paused: true });
+
+  cfg.segments.forEach((seg, i) => {
+    const root = document.querySelector(".scene-" + i);
+    master.add(function () {
+      document.querySelectorAll(".scene").forEach(function (el) { el.classList.remove("is-active"); });
+      root.classList.add("is-active");
+      gsap.set(root, { opacity: 1 });
+      subtitleEl.textContent = seg.subtitle;
+    }, seg.start);
+
+    const sceneTl = buildSceneTimeline(i, root);
+    master.add(sceneTl, seg.start);
+
+    master.add(function () {
+      gsap.to(root, { opacity: 0, duration: 0.3 });
+    }, seg.end - 0.3);
+  });
+
+  master.eventCallback("onUpdate", function () {
+    const pct = (master.progress() * 100).toFixed(1) + "%";
+    progressEl.style.background =
+      "linear-gradient(to right, var(--accent) " + pct + ", rgba(255,255,255,0.08) " + pct + ")";
+  });
+
+  master.eventCallback("onComplete", function () {
+    document.body.dataset.done = "1";
+  });
+
+  cfg.started = false;
+  window.__startVideo = function () {
+    if (cfg.started) return;
+    cfg.started = true;
+    master.restart();
+  };
+
+  document.body.dataset.ready = "1";
+})();

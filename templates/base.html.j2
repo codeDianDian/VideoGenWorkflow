@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ plan.title }}</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="stage" data-w="{{ width }}" data-h="{{ height }}">
+    {% for seg in plan.segments %}
+    <section class="scene scene-{{ seg.index }}" data-start="{{ seg.start }}" data-end="{{ seg.end }}" data-type="{{ seg.scene_type }}">
+      {{ scenes[seg.index].html | safe }}
+    </section>
+    {% endfor %}
+
+    <div id="subtitle"></div>
+    <div id="pip-safe-zone" aria-hidden="true"></div>
+    <div id="progress"></div>
+  </div>
+
+  <script>
+    window.__VIDFORGE__ = {
+      width: {{ width }},
+      height: {{ height }},
+      fps: {{ fps }},
+      duration: {{ plan.total_duration }},
+      segments: {{ plan.model_dump_json() | safe }}.segments,
+      ready: false,
+    };
+  </script>
+  <script src="./main.js"></script>
+</body>
+</html>
