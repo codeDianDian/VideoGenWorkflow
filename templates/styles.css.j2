@@ -40,6 +40,8 @@ html, body {
 
 .scene.is-active {
   visibility: visible;
+  /* Must override .scene { opacity: 0 } — otherwise children stay fully transparent (black “empty” stage). */
+  opacity: 1;
 }
 
 #subtitle {

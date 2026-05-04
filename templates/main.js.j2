@@ -44,6 +44,19 @@
     document.body.dataset.done = "1";
   });
 
+  /* First frame before GSAP callbacks run: parent opacity 0 hides all children, so show scene 0. */
+  (function primeInitialScene() {
+    if (!cfg.segments.length) return;
+    var root = document.querySelector(".scene-0");
+    if (!root) return;
+    document.querySelectorAll(".scene").forEach(function (el) {
+      el.classList.remove("is-active");
+    });
+    root.classList.add("is-active");
+    gsap.set(root, { opacity: 1 });
+    subtitleEl.textContent = cfg.segments[0].subtitle || "";
+  })();
+
   cfg.started = false;
   window.__startVideo = function () {
     if (cfg.started) return;
