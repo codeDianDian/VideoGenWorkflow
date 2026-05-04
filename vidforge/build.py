@@ -18,7 +18,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from rich.console import Console
 
-from .config import settings
+from .config import PROJECT_ROOT, settings
 from .llm import ask_json, report_cache_stats
 from .schemas import SceneCode, ScriptPlan, Segment
 
@@ -50,6 +50,26 @@ SCENE_SYSTEM = (
 )
 
 
+_LIBTV_SKILL_MD = (
+    PROJECT_ROOT / "third_party" / "libtv-skills" / "skills" / "libtv-skill" / "SKILL.md"
+)
+
+
+def _libtv_skill_scene_note() -> str:
+    """Optional context for the scene LLM when the LibTV skill is vendored in-repo."""
+    if not settings.libtv_skill_in_scene_prompt:
+        return ""
+    if not _LIBTV_SKILL_MD.is_file():
+        return ""
+    return (
+        "\n"
+        "LibTV workflow (optional): The repo includes `third_party/libtv-skills` — see `skills/libtv-skill/SKILL.md` "
+        "and its `scripts/` for LibLib.tv Agent-IM (same `LIBTV_ACCESS_KEY` as HyperFrames). "
+        "Use that path in a separate step for reference stills or video; for **this** scene output keep "
+        "**inline SVG / pure CSS only** (no external image or video URLs in the fragment).\n"
+    )
+
+
 def _scene_user(seg: Segment, plan: ScriptPlan) -> str:
     return (
         f"Project style: {plan.style}\n"
@@ -69,6 +89,7 @@ def _scene_user(seg: Segment, plan: ScriptPlan) -> str:
         f"Add tweens that together last <= {seg.duration:.2f}s. Do NOT call tl.play() yourself.\n"
         "- NEVER reassign tl from globals (e.g. window.tl does not exist) — only use the injected `tl`.\n"
         "- Prefer 1-3 large visual elements with staggered entrances. Strong typography wins.\n"
+        f"{_libtv_skill_scene_note()}"
     )
 
 

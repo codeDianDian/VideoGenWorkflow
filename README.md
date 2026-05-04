@@ -34,6 +34,17 @@ brew install ffmpeg                 # or your OS equivalent
 
 cp .env.example .env                # set DEEPSEEK_API_KEY at minimum
 
+After clone, fetch vendored skills (LibTV Agent-IM):
+
+```bash
+git submodule update --init --recursive
+```
+
+`third_party/libtv-skills` ships the [libtv-labs/libtv-skills](https://github.com/libtv-labs/libtv-skills)
+repo; `skills/libtv-skill` is a symlink into it so Cursor/OpenClaw-style agents resolve the skill in the project root.
+Scene generation (`vidforge build`) appends a short LibTV note to each scene prompt when `SKILL.md` is present —
+set `VIDFORGE_LIBTV_SKILL_IN_SCENE_PROMPT=false` to disable.
+
 If the UI still shows OpenAI / GPT, your `.env` probably still has
 `VIDFORGE_LLM_PROVIDER=openai` from an old install — change it to `deepseek` or
 remove `OPENAI_API_KEY` when you only use DeepSeek (the app will then prefer

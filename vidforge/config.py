@@ -30,6 +30,9 @@ class Settings(BaseSettings):
         alias="DEEPSEEK_BASE_URL",
     )
     libtv_access_key: str | None = Field(default=None, alias="LIBTV_ACCESS_KEY")
+    #: When True and ``third_party/libtv-skills/skills/libtv-skill/SKILL.md`` exists, scene LLM prompts
+    #: include a short note pointing at the vendored LibTV Agent-IM skill (still inline SVG/CSS only in output).
+    libtv_skill_in_scene_prompt: bool = True
 
     width: int = 1080
     height: int = 1920
