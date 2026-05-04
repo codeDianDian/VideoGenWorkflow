@@ -32,7 +32,12 @@ playwright install chromium
 
 brew install ffmpeg                 # or your OS equivalent
 
-cp .env.example .env                # set DEEPSEEK_API_KEY (or ANTHROPIC_/OPENAI_)
+cp .env.example .env                # set DEEPSEEK_API_KEY at minimum
+
+If the UI still shows OpenAI / GPT, your `.env` probably still has
+`VIDFORGE_LLM_PROVIDER=openai` from an old install — change it to `deepseek` or
+remove `OPENAI_API_KEY` when you only use DeepSeek (the app will then prefer
+DeepSeek when a DeepSeek key is present and the other vendor’s key is absent).
 ```
 
 Optional — for the **HyperFrames** renderer (the route shown in the original infographic):

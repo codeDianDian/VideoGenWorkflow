@@ -16,9 +16,12 @@ import os
 from dataclasses import dataclass
 from typing import TypeVar
 
+from anthropic import RateLimitError as AnthropicRateLimitError
+from openai import APIStatusError as OpenAIAPIStatusError
+from openai import RateLimitError as OpenAIRateLimitError
 from pydantic import BaseModel, ValidationError
 from rich.console import Console
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from .config import settings
 
@@ -134,7 +137,20 @@ def _cache_key(system: str, full_user: str, schema: str) -> str:
     return h.hexdigest()
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+def _is_retryable_llm_transport_error(exc: BaseException) -> bool:
+    if isinstance(exc, (OpenAIRateLimitError, AnthropicRateLimitError)):
+        return True
+    if isinstance(exc, OpenAIAPIStatusError) and exc.status_code == 429:
+        return True
+    return False
+
+
+@retry(
+    retry=retry_if_exception(_is_retryable_llm_transport_error),
+    stop=stop_after_attempt(10),
+    wait=wait_exponential(min=3, max=120),
+    reraise=True,
+)
 def _ask_llm_raw(system: str, user: str, max_tokens: int) -> str:
     provider = settings.llm_provider
     if provider == "anthropic":
