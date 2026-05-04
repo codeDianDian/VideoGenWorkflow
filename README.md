@@ -79,6 +79,21 @@ build/
 
 ---
 
+## Web 工作台
+
+在浏览器里贴文案、看流水线各阶段进度、预览成片（与 CLI 同一套 `VideoRun.execute()`）：
+
+```bash
+vidforge ui
+# 或
+streamlit run vidforge/ui.py
+```
+
+- **工作台**：粘贴 Markdown 脚本、设置目标秒数、可选自动配音与口播 PIP（mp4）。任务在后台线程执行，页面每 2 秒轮询 `runs/<slug>/manifest.json` 更新阶段条与状态。
+- **运行记录**：浏览历史 run，查看分镜 JSON、内嵌场景预览、关键帧与清单日志。
+
+---
+
 ## Per-stage iteration
 
 Every stage is idempotent and can be re-run without redoing the others — the
@@ -107,7 +122,8 @@ vidforge/
 ├── build.py                # segments -> per-scene HTML/CSS/JS (LLM + Jinja)
 ├── render.py               # HyperFrames CLI OR Playwright + ffmpeg
 ├── tts.py                  # edge-tts segment-aligned narration
-└── composite.py            # ffmpeg PIP overlay, subtitle burn, audio mix
+├── composite.py            # ffmpeg PIP overlay, subtitle burn, audio mix
+└── ui.py                   # Streamlit 工作台 + 运行记录
 templates/
 ├── base.html.j2            # GSAP-loaded stage with PIP safe zone
 ├── styles.css.j2           # base styles + scoped scene styles
