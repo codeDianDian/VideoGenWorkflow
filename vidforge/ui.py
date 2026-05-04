@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import streamlit as st
 
-from vidforge.config import settings
+from vidforge.config import Settings, settings
 from vidforge.runner import VideoRun, list_runs, load_manifest
 
 PIPELINE_STEPS = [
@@ -249,9 +249,18 @@ def _render_workbench() -> None:
         st.success(f"任务已启动: `{run.run_dir.name}`")
         st.rerun()
 
+    _builtin_provider = Settings.model_fields["llm_provider"].default
+    _provider_overridden = settings.llm_provider != _builtin_provider
+    _override_hint = (
+        "（`VIDFORGE_LLM_PROVIDER` 等环境变量已覆盖代码默认的 DeepSeek。）"
+        if _provider_overridden
+        else ""
+    )
     st.caption(
-        f"需要配置 LLM（当前 provider: `{settings.llm_model}` / `{settings.llm_provider}`），见 `.env.example`。"
-        f" 成片目录: `{settings.runs_dir}`。"
+        f"请配置对应 API Key（见 `.env.example`）。"
+        f"当前 LLM：**厂商** `{settings.llm_provider}`，**模型** `{settings.llm_model}`"
+        f"（与后台 `settings` 一致）{_override_hint}"
+        f" 成片目录：`{settings.runs_dir}`。"
     )
 
 
