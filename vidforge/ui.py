@@ -14,6 +14,7 @@ responsive; progress is read from `runs/<slug>/manifest.json` on poll.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import threading
 from datetime import timedelta
@@ -146,19 +147,31 @@ def _read_build_progress_caption(run_dir: Path) -> str | None:
     except Exception:
         return None
     phase = bp.get("phase")
+    updated = bp.get("updated_at") or ""
     if phase == "llm_scenes":
         c = bp.get("completed", 0)
         t = bp.get("total", "?")
-        wi = bp.get("working_on_index")
         cap = bp.get("concurrency")
+        inflight = bp.get("in_flight")
         parts = [f"动画工程（LLM）：已完成 {c}/{t} 个分镜"]
-        if wi is not None:
-            parts.append(f"当前生成 scene_{int(wi):02d}")
+        if isinstance(inflight, list) and inflight:
+            nums = sorted(int(x) for x in inflight)
+            if len(nums) <= 4:
+                parts.append("进行中: " + ", ".join(f"scene_{n:02d}" for n in nums))
+            else:
+                parts.append(f"进行中 {len(nums)} 路并发（含 scene_{nums[0]:02d}…）")
+        else:
+            wi = bp.get("working_on_index")
+            if wi is not None:
+                parts.append(f"当前生成 scene_{int(wi):02d}")
         if cap:
-            parts.append(f"并发 {cap}")
+            parts.append(f"并发上限 {cap}")
+        if updated:
+            parts.append(f"快照 {updated}")
         return " · ".join(parts)
     if phase == "templates":
-        return "动画工程：正在组装 HTML / CSS / JS …"
+        msg = "动画工程：正在组装 HTML / CSS / JS …"
+        return f"{msg} · {updated}" if updated else msg
     return None
 
 
@@ -722,7 +735,9 @@ def _start_background_run(
 
 def _fragment_poll_decorator():
     try:
-        return st.fragment(run_every=timedelta(seconds=2))  # type: ignore[attr-defined]
+        poll_s = float(os.environ.get("VIDFORGE_UI_POLL_S", "1"))
+        poll_s = max(0.4, min(poll_s, 15.0))
+        return st.fragment(run_every=timedelta(seconds=poll_s))  # type: ignore[attr-defined]
     except Exception:  # Streamlit too old
         def _noop(f):
             return f

@@ -9,7 +9,8 @@ Optimisations vs v1:
   * Each `ask_json` call is disk-cached (see `llm.py`); a re-run with the same
     plan is essentially free.
   * When `run_dir` is set (full `VideoRun` pipeline), `_build_progress.json` is
-    updated for the UI to show LLM scene completion counts.
+    updated with `completed`, `total`, `in_flight` (indices currently in LLM), and
+    `updated_at` for the UI poll.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import asyncio
 import json
 import os
 import re
+from datetime import datetime
 from html import escape
 from pathlib import Path
 
@@ -41,8 +43,12 @@ def write_build_progress(run_dir: Path | None, payload: dict) -> None:
     path = run_dir / _BUILD_PROGRESS_NAME
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
+        body = {
+            **payload,
+            "updated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        }
         tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
     except OSError:
         pass
@@ -340,40 +346,36 @@ async def _generate_all_scenes(
     total_segs = len(plan.segments)
     lock = asyncio.Lock()
     completed = 0
+    in_flight: set[int] = set()
+
+    def _snapshot_progress() -> dict:
+        return {
+            "phase": "llm_scenes",
+            "completed": completed,
+            "total": total_segs,
+            "concurrency": max_concurrency,
+            "in_flight": sorted(in_flight),
+            # Legacy single-slot field: largest index still running (best effort for old UIs).
+            "working_on_index": max(in_flight) if in_flight else None,
+        }
 
     async def _one(seg: Segment) -> SceneCode:
         nonlocal completed
         async with sem:
             async with lock:
-                done_snapshot = completed
-            write_build_progress(
-                run_dir,
-                {
-                    "phase": "llm_scenes",
-                    "completed": done_snapshot,
-                    "total": total_segs,
-                    "working_on_index": seg.index,
-                    "concurrency": max_concurrency,
-                },
-            )
+                in_flight.add(seg.index)
+                write_build_progress(run_dir, _snapshot_progress())
             console.log(
                 f"[cyan]\u25b6\ufe0f scene {seg.index} ({seg.scene_type})[/cyan] {seg.subtitle}"
             )
             code = await asyncio.to_thread(generate_scene, seg, plan)
             console.log(f"[green]\u2713 scene {seg.index} ready[/green]")
             async with lock:
+                in_flight.discard(seg.index)
                 completed += 1
-                write_build_progress(
-                    run_dir,
-                    {
-                        "phase": "llm_scenes",
-                        "completed": completed,
-                        "total": total_segs,
-                        "working_on_index": None,
-                        "last_finished_index": seg.index,
-                        "concurrency": max_concurrency,
-                    },
-                )
+                snap = _snapshot_progress()
+                snap["last_finished_index"] = seg.index
+                write_build_progress(run_dir, snap)
             return code
 
     return await asyncio.gather(*(_one(s) for s in plan.segments))
@@ -401,6 +403,7 @@ def build_project(
                 "completed": 0,
                 "total": len(plan.segments),
                 "concurrency": cap,
+                "in_flight": [],
             },
         )
         scenes = asyncio.run(_generate_all_scenes(plan, cap, run_dir))
@@ -412,6 +415,7 @@ def build_project(
                 "phase": "templates",
                 "completed": len(plan.segments),
                 "total": len(plan.segments),
+                "in_flight": [],
             },
         )
 
