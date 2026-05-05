@@ -27,10 +27,11 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from .config import settings
 
-# OpenAI SDK defaults are tight; long JSON + overseas TLS often needs more headroom
-# or requests fail with APIConnectionError.
-_LLM_HTTP_TIMEOUT_S = 180.0
-_LLM_MAX_OPENAI_RETRIES = 5
+# Keep these configurable because scene generation runs several long JSON calls.
+# Defaults are intentionally bounded so one flaky request cannot stall an entire run.
+_LLM_HTTP_TIMEOUT_S = float(os.environ.get("VIDFORGE_LLM_HTTP_TIMEOUT_S", "90"))
+_LLM_MAX_OPENAI_RETRIES = int(os.environ.get("VIDFORGE_LLM_CLIENT_RETRIES", "2"))
+_LLM_RETRY_ATTEMPTS = int(os.environ.get("VIDFORGE_LLM_RETRY_ATTEMPTS", "4"))
 
 T = TypeVar("T", bound=BaseModel)
 console = Console()
@@ -167,7 +168,7 @@ def _is_retryable_llm_transport_error(exc: BaseException) -> bool:
 
 @retry(
     retry=retry_if_exception(_is_retryable_llm_transport_error),
-    stop=stop_after_attempt(10),
+    stop=stop_after_attempt(_LLM_RETRY_ATTEMPTS),
     wait=wait_exponential(min=3, max=120),
     reraise=True,
 )

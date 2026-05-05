@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from html import escape
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -46,6 +47,13 @@ SCENE_SYSTEM = (
     "All animation must be expressed via the supplied `tl` (gsap.timeline) so a downstream renderer can capture it. "
     "All assets must be inline SVG / pure CSS - never reference external images, fonts or APIs. "
     "Every scene must include at least one substantial inline SVG illustration or diagram; text-only scenes are invalid. "
+    "Target look: premium warm editorial motion design for family-friendly explainers. Use a coherent palette of "
+    "cream, amber, coral, cocoa, and charcoal; layered shapes or cards; rounded corners; soft shadows; crisp "
+    "alignment; and typography that feels deliberate. The frame should feel composed like a finished poster or "
+    "social explainer, not like a sticker collage or a school worksheet. Avoid huge empty backdrops, tiny isolated "
+    "icons, Comic Sans, novelty fonts, and default-browser-looking layouts unless the script explicitly calls for them. "
+    "Prefer one clear hero focal area plus one supporting accent cluster so the composition has depth and hierarchy "
+    "instead of feeling sparse. "
     "NEVER use gsap repeat: -1 / Infinity or any infinite tween — every tween must finish within the scene window "
     "or the master timeline never completes."
 )
@@ -74,6 +82,9 @@ def _libtv_skill_scene_note() -> str:
 def _scene_user(seg: Segment, plan: ScriptPlan) -> str:
     return (
         f"Project style: {plan.style}\n"
+        "Visual direction: premium warm editorial motion design, not clip-art and not a worksheet look.\n"
+        "Prefer layered shapes, deliberate whitespace, crisp Chinese typography, rounded cards or ribbons, and "
+        "subtle shadows so the frame feels finished.\n"
         f"Stage size: {settings.width}x{settings.height} (9:16)\n"
         f"Scene index: {seg.index}\n"
         f"Scene type: {seg.scene_type}\n"
@@ -91,6 +102,11 @@ def _scene_user(seg: Segment, plan: ScriptPlan) -> str:
         "- NEVER reassign tl from globals (e.g. window.tl does not exist) — only use the injected `tl`.\n"
         "- Must include a real inline <svg> visual with multiple graphical primitives (path/circle/rect/line/etc.); "
         "subtitles or headings alone do not count as visuals.\n"
+        "- Compose the scene like a finished editorial explainer: one strong hero composition plus one secondary accent "
+        "zone, balanced negative space, and a clear visual hierarchy. Do not leave the frame looking accidentally empty.\n"
+        "- If you use text, give it a designed container: ribbon, card, label, or chart caption. Avoid raw floating text "
+        "when a panel or shape would make it feel more intentional.\n"
+        "- Prefer clean, deliberate typography. Avoid Comic Sans, novelty handwriting fonts, and default-looking layouts.\n"
         "- Do not create any element with id=\"subtitle\"; the base template owns the global subtitle layer. "
         "Use class names such as `.scene-caption` for scene-local text.\n"
         "- If CSS sets any visual/text element to opacity: 0, the JS must animate that same element to opacity: 1 "
@@ -108,6 +124,8 @@ def _scene_visual_issues(code: SceneCode) -> list[str]:
     issues: list[str] = []
     if "<svg" not in html:
         issues.append("html has no inline <svg> visual")
+    if "comic sans" in html or "comic sans" in css:
+        issues.append("avoid Comic Sans; use a more polished font pairing")
     if re.search(r"\bid\s*=\s*['\"]subtitle['\"]", code.html, flags=re.I):
         issues.append("html uses reserved id='subtitle'; use a class name instead")
     primitive_count = len(
@@ -125,6 +143,118 @@ def _scene_visual_issues(code: SceneCode) -> list[str]:
     return issues
 
 
+def _scene_fallback_enabled() -> bool:
+    return os.environ.get("VIDFORGE_SCENE_FALLBACK", "1").lower() not in {"0", "false", "no"}
+
+
+def _fallback_scene(seg: Segment, plan: ScriptPlan, reason: str) -> SceneCode:
+    idx = seg.index
+    title = escape(seg.subtitle)
+    visual = escape(seg.visuals or seg.narration or seg.subtitle)
+    label = escape(str(seg.scene_type).upper())
+    keyword = escape((seg.keywords or [plan.title])[0] if (seg.keywords or [plan.title]) else "VIDFORGE")
+    html = f"""
+<div class="vf-scene-shell">
+  <div class="vf-kicker">{label}</div>
+  <div class="vf-title">{title}</div>
+  <svg class="vf-visual" viewBox="0 0 760 560" aria-hidden="true">
+    <defs>
+      <linearGradient id="vf-grad-{idx}" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0%" stop-color="#fff7e8"/>
+        <stop offset="100%" stop-color="#ffd0a8"/>
+      </linearGradient>
+      <filter id="vf-shadow-{idx}" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#7c3f20" flood-opacity="0.18"/>
+      </filter>
+    </defs>
+    <rect class="vf-mark vf-board" x="70" y="70" width="620" height="390" rx="42" fill="url(#vf-grad-{idx})" filter="url(#vf-shadow-{idx})"/>
+    <circle class="vf-mark" cx="180" cy="170" r="58" fill="#ff7f64" opacity="0.9"/>
+    <rect class="vf-mark" x="275" y="138" width="290" height="28" rx="14" fill="#5b3426" opacity="0.82"/>
+    <rect class="vf-mark" x="275" y="198" width="220" height="24" rx="12" fill="#9a5a3b" opacity="0.5"/>
+    <path class="vf-mark" d="M178 272 C248 220 316 356 394 288 C464 226 524 304 596 244" fill="none" stroke="#ff8f5f" stroke-width="18" stroke-linecap="round"/>
+    <circle class="vf-mark" cx="600" cy="360" r="66" fill="#ffe2a6" stroke="#ffb15c" stroke-width="10"/>
+    <path class="vf-mark" d="M570 358 L595 384 L638 322" fill="none" stroke="#5b3426" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <div class="vf-note">{visual}</div>
+  <div class="vf-chip">{keyword}</div>
+</div>
+"""
+    css = f"""
+.scene-{idx} {{
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255,255,255,0.58), transparent 30%),
+    linear-gradient(150deg, #fff2d7 0%, #ffd5ad 58%, #f07f61 100%);
+}}
+.scene-{idx} .vf-scene-shell {{
+  position: relative;
+  width: 840px;
+  min-height: 1180px;
+  padding: 92px 74px 82px;
+  border-radius: 42px;
+  background: rgba(255, 252, 244, 0.76);
+  box-shadow: 0 36px 100px rgba(92, 48, 24, 0.22);
+  color: #3c241b;
+  overflow: hidden;
+}}
+.scene-{idx} .vf-kicker {{
+  display: inline-block;
+  padding: 16px 26px;
+  border-radius: 999px;
+  background: #3c241b;
+  color: #fff7e8;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0;
+}}
+.scene-{idx} .vf-title {{
+  margin-top: 46px;
+  font-size: 70px;
+  line-height: 1.12;
+  font-weight: 900;
+  letter-spacing: 0;
+}}
+.scene-{idx} .vf-visual {{
+  display: block;
+  width: 100%;
+  margin-top: 56px;
+}}
+.scene-{idx} .vf-note {{
+  margin-top: 42px;
+  font-size: 34px;
+  line-height: 1.42;
+  color: rgba(60, 36, 27, 0.72);
+}}
+.scene-{idx} .vf-chip {{
+  position: absolute;
+  right: 58px;
+  bottom: 58px;
+  padding: 18px 28px;
+  border-radius: 24px;
+  background: #ff7f64;
+  color: white;
+  font-size: 30px;
+  font-weight: 800;
+  box-shadow: 0 18px 42px rgba(240, 127, 97, 0.32);
+}}
+"""
+    js = """
+const shell = root.querySelector(".vf-scene-shell");
+const visual = root.querySelector(".vf-visual");
+const marks = root.querySelectorAll(".vf-mark");
+const title = root.querySelector(".vf-title");
+const note = root.querySelector(".vf-note");
+const chip = root.querySelector(".vf-chip");
+tl.fromTo(shell, { opacity: 0, y: 46, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.7, ease: "power3.out" })
+  .fromTo(title, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.55, ease: "power2.out" }, 0.18)
+  .fromTo(visual, { opacity: 0, y: -18 }, { opacity: 1, y: 0, duration: 0.55, ease: "power2.out" }, 0.32)
+  .fromTo(marks, { opacity: 0, scale: 0.9, transformOrigin: "center center" }, { opacity: 1, scale: 1, duration: 0.5, stagger: 0.055, ease: "back.out(1.6)" }, 0.48)
+  .fromTo(note, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 0.8)
+  .fromTo(chip, { opacity: 0, y: 18, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.8)" }, 0.95);
+"""
+    console.log(f"[yellow]scene {idx} using fallback visual: {reason[:180]}[/yellow]")
+    return SceneCode(index=idx, html=html, css=css, js=js)
+
+
 def generate_scene(seg: Segment, plan: ScriptPlan) -> SceneCode:
     # 6–8 parallel SceneCode calls can each return long CSS/JS; 2200 tokens
     # truncates JSON on DeepSeek/OpenAI — use a generous ceiling.
@@ -132,7 +262,15 @@ def generate_scene(seg: Segment, plan: ScriptPlan) -> SceneCode:
     user_prompt = _scene_user(seg, plan)
     last_issues: list[str] = []
     for attempt in range(2):
-        code = ask_json(SCENE_SYSTEM, user_prompt, SceneCode, max_tokens=cap)
+        try:
+            code = ask_json(SCENE_SYSTEM, user_prompt, SceneCode, max_tokens=cap)
+        except Exception as exc:
+            last_issues = [f"{type(exc).__name__}: {exc}"]
+            console.log(
+                f"[yellow]scene {seg.index} generation failed {attempt + 1}/2: "
+                f"{last_issues[0][:180]}[/yellow]"
+            )
+            continue
         code.index = seg.index
         # LLMs sometimes emit infinite GSAP tweens (repeat: -1) which prevents the
         # master timeline from ever calling onComplete — clamp defensively.
@@ -153,6 +291,8 @@ def generate_scene(seg: Segment, plan: ScriptPlan) -> SceneCode:
             "Regenerate the full SceneCode JSON. Add a substantial inline SVG illustration/diagram "
             "with multiple shapes and animate its SVG elements via `tl` and `root.querySelector(...)`."
         )
+    if _scene_fallback_enabled():
+        return _fallback_scene(seg, plan, "; ".join(last_issues) or "scene generation did not pass QA")
     raise RuntimeError(f"scene {seg.index} failed visual QA: {'; '.join(last_issues)}")
 
 

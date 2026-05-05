@@ -15,7 +15,9 @@ PLANNER_SYSTEM = (
     "You are a senior short-form-video director. You break a written script "
     "into 5-8 tightly-edited segments suitable for a 9:16 vertical video. "
     "Each segment must have its own visual identity and a precise time window. "
-    "All times must be monotonically increasing and cover the full duration."
+    "All times must be monotonically increasing and cover the full duration. "
+    "When you describe the visual style, prefer a polished editorial motion-design language over a simple, cute, "
+    "or worksheet-like look."
 )
 
 
@@ -27,6 +29,9 @@ def _planner_user(script_text: str, total_duration: int, language_hint: str) -> 
         f"The first segment must be scene_type=hook and last <=3s.\n"
         f"The final segment must be scene_type=cta.\n"
         f"Subtitles must be punchy (~10-22 chars per line for Chinese, ~6 words for English).\n\n"
+        "When you write the `style` field, make it concrete and production-ready, for example "
+        "\"premium warm editorial motion design with cream/amber/coral accents, layered cards, soft shadows, "
+        "and crisp typography\". Avoid vague labels like simple, cute, or generic.\n\n"
         f"Script:\n----\n{script_text}\n----"
     )
 

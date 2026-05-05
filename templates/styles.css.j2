@@ -55,33 +55,13 @@ html, body {
   line-height: 1.25;
   text-shadow: 0 4px 24px rgba(0,0,0,0.6);
   letter-spacing: 0.02em;
+  max-width: 960px;
+  text-wrap: balance;
 }
 
-#pip-safe-zone {
-  position: absolute;
-  right: 48px;
-  bottom: 48px;
-  width: 360px;
-  height: 360px;
-  border-radius: 24px;
-  border: 2px dashed rgba(255,255,255,0.15);
-  pointer-events: none;
-}
-
+#pip-safe-zone,
 #progress {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 6px;
-  background: rgba(255,255,255,0.08);
-}
-#progress::after {
-  content: "";
-  display: block;
-  height: 100%;
-  width: 0%;
-  background: var(--accent);
+  display: none;
 }
 
 {{ scene_styles }}
