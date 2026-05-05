@@ -288,7 +288,10 @@ class VideoRun:
                         run_dir, self.manifest, "build", skip_narrate=skip_narrate
                     )
                 ):
-                    self._stage("build", lambda: build_stage.build_project(plan, project_dir))
+                    self._stage(
+                        "build",
+                        lambda: build_stage.build_project(plan, project_dir, run_dir=run_dir),
+                    )
 
                 def _render_fn():
                     job = render_stage.render(project_dir, anim_path, plan)

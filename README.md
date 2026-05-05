@@ -56,9 +56,12 @@ see `APIConnectionError`, update to the latest `vidforge` (longer HTTP timeouts)
 or check VPN / firewall to `api.deepseek.com`.
 ```
 
-If **Playwright render** times out waiting for `dataset.ready`, set
-`VIDFORGE_PLAYWRIGHT_READY_TIMEOUT_MS` in `.env` (default **120000** ms; was 30s
-before). If it times out waiting for `dataset.done` (animation never finishes),
+If **Playwright render** fails while waiting for `dataset.ready`, first check
+`render_error.log`: browser `pageerror` entries now fail fast instead of waiting
+out the full timeout. If there is no page error and the page is merely slow to
+initialize, set `VIDFORGE_PLAYWRIGHT_READY_TIMEOUT_MS` in `.env` (default
+**120000** ms; was 30s before). If it times out waiting for `dataset.done`
+(animation never finishes),
 raise `VIDFORGE_PLAYWRIGHT_DONE_BUFFER_S` and/or
 `VIDFORGE_PLAYWRIGHT_DONE_TIMEOUT_FLOOR_MS` — the renderer now uses
 `max(plan.total_duration, last segment end) + buffer` instead of `total_duration` alone.

@@ -47,18 +47,17 @@ gpt-4o, more on Claude Sonnet.
 
 ### 1.2 Parallel scene generation
 
-`build_project()` calls the LLM **once per scene serially**. With 5–8 segments
-the wall-clock is ~30–60s. They are independent — gather them.
+`build_project()` already runs one LLM call per scene **in parallel** (`asyncio.gather` +
+`asyncio.to_thread`), with a semaphore default **concurrent cap of 4** (`VIDFORGE_BUILD_CONCURRENCY`;
+lower reduces burst 429s on shared API quotas). Full runs also write `runs/<slug>/_build_progress.json`
+so the Streamlit workbench can show **scene N/M** while the build stage runs.
 
 ```python
-import asyncio
-async def _gen(seg):
-    return await asyncio.to_thread(generate_scene, seg, plan)
-scenes = await asyncio.gather(*[_gen(s) for s in plan.segments])
+# Optional: raise cap on a dedicated high-rate key
+# VIDFORGE_BUILD_CONCURRENCY=6
 ```
 
-**Impact:** 5x to 8x faster build; the LLM call happens to be the dominant cost
-of a run.
+**Impact:** wall-clock is driven by the slowest few scenes plus rate limits, not the sum of all segments.
 
 ### 1.3 Token budgets per stage
 

@@ -10,6 +10,7 @@ Both backends honour the project's stage size and total duration.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import subprocess
@@ -108,24 +109,43 @@ async def _record_with_playwright(project_dir: Path, output_path: Path, plan: Sc
         )
         page = await ctx.new_page()
         page.on("console", _on_console)
+        page_error = asyncio.get_running_loop().create_future()
 
         def _pageerror(err) -> None:
-            browser_lines.append(f"pageerror: {err!r}")
+            msg = f"{err!r}"
+            browser_lines.append(f"pageerror: {msg}")
+            if not page_error.done():
+                page_error.set_result(msg)
 
         page.on("pageerror", _pageerror)
+
+        async def _wait_for_page_state(expr: str, *, timeout: int, label: str) -> None:
+            wait_task = asyncio.create_task(page.wait_for_function(expr, timeout=timeout))
+            done, _ = await asyncio.wait(
+                {wait_task, page_error},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if page_error in done:
+                wait_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await wait_task
+                raise RuntimeError(f"Browser pageerror while waiting for {label}: {page_error.result()}")
+            await wait_task
 
         ready_val = ""
         done_val = ""
         try:
             await page.goto(url, wait_until="load")
-            await page.wait_for_function(
+            await _wait_for_page_state(
                 "document.body.dataset.ready === '1'",
                 timeout=ready_timeout,
+                label="dataset.ready",
             )
             await page.evaluate("window.__startVideo && window.__startVideo()")
-            await page.wait_for_function(
+            await _wait_for_page_state(
                 "document.body.dataset.done === '1'",
                 timeout=done_timeout_ms,
+                label="dataset.done",
             )
         except Exception:
             try:
@@ -179,6 +199,10 @@ async def _record_with_playwright(project_dir: Path, output_path: Path, plan: Sc
 
 def render_with_playwright(project_dir: Path, output_path: Path, plan: ScriptPlan) -> RenderJob:
     _ensure_ffmpeg()
+    for stale_log in ("render_error.log", "render_ffmpeg_error.log"):
+        stale_path = output_path.parent / stale_log
+        if stale_path.exists():
+            stale_path.unlink()
     job = RenderJob(
         project_dir=str(project_dir),
         output_path=str(output_path),

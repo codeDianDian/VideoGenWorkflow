@@ -7,9 +7,9 @@
     const tl = gsap.timeline();
     {% for seg in plan.segments %}
     if (segIndex === {{ seg.index }}) {
-      (function () {
+      (function (tl, root) {
         {{ scenes[seg.index].js | indent(8) }}
-      })();
+      })(tl, root);
     }
     {% endfor %}
     return tl;

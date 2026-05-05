@@ -4,13 +4,17 @@ Equivalent to "Codex 生成动画工程" in the workflow image.
 
 Optimisations vs v1:
   * Scenes are generated **in parallel** via `asyncio.to_thread` -> `asyncio.gather`.
-    Wall-clock for a 6-segment plan drops from ~30-60 s to ~6-12 s.
+  * Default concurrency is 4 (`VIDFORGE_BUILD_CONCURRENCY`) to reduce API burst / 429s;
+    raise to 6–8 on dedicated high-rate accounts.
   * Each `ask_json` call is disk-cached (see `llm.py`); a re-run with the same
     plan is essentially free.
+  * When `run_dir` is set (full `VideoRun` pipeline), `_build_progress.json` is
+    updated for the UI to show LLM scene completion counts.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from html import escape
@@ -23,7 +27,35 @@ from .config import PROJECT_ROOT, settings
 from .llm import ask_json, report_cache_stats
 from .schemas import SceneCode, ScriptPlan, Segment
 
-_DEFAULT_BUILD_CONCURRENCY = 6
+# Default parallel LLM scene calls. Lower than 6 reduces burst 429s on shared API quotas;
+# override with VIDFORGE_BUILD_CONCURRENCY.
+_DEFAULT_BUILD_CONCURRENCY = 4
+
+_BUILD_PROGRESS_NAME = "_build_progress.json"
+
+
+def write_build_progress(run_dir: Path | None, payload: dict) -> None:
+    """Best-effort atomic write for UI / CLI to poll during long LLM builds."""
+    if run_dir is None:
+        return
+    path = run_dir / _BUILD_PROGRESS_NAME
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def clear_build_progress(run_dir: Path | None) -> None:
+    if run_dir is None:
+        return
+    path = run_dir / _BUILD_PROGRESS_NAME
+    try:
+        path.unlink()
+    except OSError:
+        pass
 
 console = Console()
 
@@ -97,7 +129,8 @@ def _scene_user(seg: Segment, plan: ScriptPlan) -> str:
         f"- Wrap all CSS selectors with .scene-{seg.index} so styles do not leak.\n"
         "- The HTML fragment is injected INSIDE a <section class=\"scene\"> so do NOT add <html>/<body>/<section>.\n"
         "- Never write to the bottom 380px (PIP safe zone) or the bottom 60px (subtitle bar).\n"
-        "- The JS body runs inside an IIFE with `tl` (a paused gsap.timeline()) and `root` (the scene element) in scope. "
+        "- The JS body runs inside an IIFE that receives `tl` (a paused gsap.timeline()) and `root` (the scene element) "
+        "as arguments and keeps them in scope. "
         f"Add tweens that together last <= {seg.duration:.2f}s. Do NOT call tl.play() yourself.\n"
         "- NEVER reassign tl from globals (e.g. window.tl does not exist) — only use the injected `tl`.\n"
         "- Must include a real inline <svg> visual with multiple graphical primitives (path/circle/rect/line/etc.); "
@@ -297,17 +330,50 @@ def generate_scene(seg: Segment, plan: ScriptPlan) -> SceneCode:
 
 
 
-async def _generate_all_scenes(plan: ScriptPlan, max_concurrency: int) -> list[SceneCode]:
+async def _generate_all_scenes(
+    plan: ScriptPlan,
+    max_concurrency: int,
+    run_dir: Path | None,
+) -> list[SceneCode]:
     """Run `generate_scene` for every segment concurrently with a soft cap."""
     sem = asyncio.Semaphore(max_concurrency)
+    total_segs = len(plan.segments)
+    lock = asyncio.Lock()
+    completed = 0
 
     async def _one(seg: Segment) -> SceneCode:
+        nonlocal completed
         async with sem:
+            async with lock:
+                done_snapshot = completed
+            write_build_progress(
+                run_dir,
+                {
+                    "phase": "llm_scenes",
+                    "completed": done_snapshot,
+                    "total": total_segs,
+                    "working_on_index": seg.index,
+                    "concurrency": max_concurrency,
+                },
+            )
             console.log(
                 f"[cyan]\u25b6\ufe0f scene {seg.index} ({seg.scene_type})[/cyan] {seg.subtitle}"
             )
             code = await asyncio.to_thread(generate_scene, seg, plan)
             console.log(f"[green]\u2713 scene {seg.index} ready[/green]")
+            async with lock:
+                completed += 1
+                write_build_progress(
+                    run_dir,
+                    {
+                        "phase": "llm_scenes",
+                        "completed": completed,
+                        "total": total_segs,
+                        "working_on_index": None,
+                        "last_finished_index": seg.index,
+                        "concurrency": max_concurrency,
+                    },
+                )
             return code
 
     return await asyncio.gather(*(_one(s) for s in plan.segments))
@@ -318,31 +384,58 @@ def build_project(
     project_dir: Path | None = None,
     *,
     concurrency: int | None = None,
+    run_dir: Path | None = None,
 ) -> Path:
     project_dir = project_dir or settings.build_dir / "project"
     project_dir.mkdir(parents=True, exist_ok=True)
 
     cap = concurrency or int(os.environ.get("VIDFORGE_BUILD_CONCURRENCY", _DEFAULT_BUILD_CONCURRENCY))
-    scenes = asyncio.run(_generate_all_scenes(plan, cap))
-    scenes.sort(key=lambda s: s.index)
+    cap = max(1, cap)
 
-    env = Environment(
-        loader=FileSystemLoader(str(settings.templates_dir)),
-        autoescape=select_autoescape(disabled_extensions=("j2",)),
-    )
-    ctx = {
-        "plan": plan,
-        "scenes": {s.index: s for s in scenes},
-        "width": settings.width,
-        "height": settings.height,
-        "fps": settings.fps,
-        "scene_styles": "\n\n".join(s.css for s in scenes),
-    }
+    ok = False
+    try:
+        write_build_progress(
+            run_dir,
+            {
+                "phase": "llm_scenes",
+                "completed": 0,
+                "total": len(plan.segments),
+                "concurrency": cap,
+            },
+        )
+        scenes = asyncio.run(_generate_all_scenes(plan, cap, run_dir))
+        scenes.sort(key=lambda s: s.index)
 
-    (project_dir / "index.html").write_text(env.get_template("base.html.j2").render(**ctx), encoding="utf-8")
-    (project_dir / "styles.css").write_text(env.get_template("styles.css.j2").render(**ctx), encoding="utf-8")
-    (project_dir / "main.js").write_text(env.get_template("main.js.j2").render(**ctx), encoding="utf-8")
+        write_build_progress(
+            run_dir,
+            {
+                "phase": "templates",
+                "completed": len(plan.segments),
+                "total": len(plan.segments),
+            },
+        )
 
-    console.log(f"[green]\u2713 Project built at {project_dir}[/green]")
-    report_cache_stats()
-    return project_dir
+        env = Environment(
+            loader=FileSystemLoader(str(settings.templates_dir)),
+            autoescape=select_autoescape(disabled_extensions=("j2",)),
+        )
+        ctx = {
+            "plan": plan,
+            "scenes": {s.index: s for s in scenes},
+            "width": settings.width,
+            "height": settings.height,
+            "fps": settings.fps,
+            "scene_styles": "\n\n".join(s.css for s in scenes),
+        }
+
+        (project_dir / "index.html").write_text(env.get_template("base.html.j2").render(**ctx), encoding="utf-8")
+        (project_dir / "styles.css").write_text(env.get_template("styles.css.j2").render(**ctx), encoding="utf-8")
+        (project_dir / "main.js").write_text(env.get_template("main.js.j2").render(**ctx), encoding="utf-8")
+
+        console.log(f"[green]\u2713 Project built at {project_dir}[/green]")
+        report_cache_stats()
+        ok = True
+        return project_dir
+    finally:
+        if ok:
+            clear_build_progress(run_dir)

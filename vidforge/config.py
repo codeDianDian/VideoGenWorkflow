@@ -30,6 +30,13 @@ class Settings(BaseSettings):
         alias="DEEPSEEK_BASE_URL",
     )
     libtv_access_key: str | None = Field(default=None, alias="LIBTV_ACCESS_KEY")
+    image_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VIDFORGE_IMAGE_API_KEY", "OPENAI_API_KEY"),
+    )
+    image_api_url: str | None = Field(default=None, alias="VIDFORGE_IMAGE_API_URL")
+    image_model: str = "gpt-image-1"
+    image_size: str = "1024x1792"
     #: When True and ``third_party/libtv-skills/skills/libtv-skill/SKILL.md`` exists, scene LLM prompts
     #: include a short note pointing at the vendored LibTV Agent-IM skill (still inline SVG/CSS only in output).
     libtv_skill_in_scene_prompt: bool = True
@@ -58,7 +65,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _normalize_api_keys(self) -> Self:
-        for name in ("anthropic_api_key", "openai_api_key", "deepseek_api_key"):
+        for name in ("anthropic_api_key", "openai_api_key", "deepseek_api_key", "image_api_key"):
             v = getattr(self, name)
             if v == "":
                 setattr(self, name, None)

@@ -23,7 +23,10 @@ class Segment(BaseModel):
     end: float = Field(description="End time in seconds")
     scene_type: SceneType
     subtitle: str = Field(description="On-screen subtitle text (\u2264 22 chars per line preferred)")
-    narration: str = Field(description="Voiceover line for TTS (or matching the talking-head audio)")
+    narration: str = Field(
+        description="Voiceover for TTS: MUST be short enough to speak within (end-start) minus ~0.15s; "
+        "~3 Chinese chars/s of window or ~2 English words/s. One crisp sentence preferred."
+    )
     visuals: str = Field(description="Short prompt describing what should appear / animate")
     keywords: list[str] = Field(default_factory=list)
 
