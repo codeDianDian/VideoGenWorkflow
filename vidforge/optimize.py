@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -26,6 +27,23 @@ from .config import settings
 from .schemas import ScriptPlan, Segment
 
 console = Console()
+
+TUNE_REBUILD_PROGRESS = "_tune_rebuild_progress.json"
+
+
+def _write_tune_rebuild_progress(run_dir: Path, **fields: Any) -> None:
+    path = run_dir / TUNE_REBUILD_PROGRESS
+    try:
+        body = {
+            **fields,
+            "updated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        }
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
 
 DEFAULT_SEGMENT_TUNING: dict[str, float] = {
     "audio_shift_ms": 0.0,
@@ -613,6 +631,8 @@ def apply_frame_overrides(
         "libx264",
         "-pix_fmt",
         "yuv420p",
+        "-preset",
+        os.environ.get("VIDFORGE_FFMPEG_PRESET", "fast"),
         "-movflags",
         "+faststart",
         str(output_path),
@@ -633,41 +653,72 @@ def rebuild_tuned_outputs(
     segment_options: dict[int, dict[str, float]] | None = None,
 ) -> dict[str, Path]:
     project_dir = run_dir / "project"
-    patch_project_plan(project_dir, plan)
+    ok = False
+    try:
+        _write_tune_rebuild_progress(run_dir, phase="patch_project", detail="同步 index.html 时间轴")
+        patch_project_plan(project_dir, plan)
 
-    animation_base = run_dir / "animation.mp4"
-    if render_animation:
-        animation_base = run_dir / "animation_tuned.mp4"
-        job = render_stage.render(project_dir, animation_base, plan)
-        if not job.success:
-            raise RuntimeError(f"render failed: {job.log[-2000:]}")
+        animation_base = run_dir / "animation.mp4"
+        if render_animation:
+            animation_base = run_dir / "animation_tuned.mp4"
+            _write_tune_rebuild_progress(
+                run_dir,
+                phase="playwright_render",
+                detail="Playwright 录制中（等 GSAP dataset.done，可能需数分钟）",
+            )
+            job = render_stage.render(project_dir, animation_base, plan)
+            if not job.success:
+                raise RuntimeError(f"render failed: {job.log[-2000:]}")
+            _write_tune_rebuild_progress(run_dir, phase="render_done", detail=str(animation_base.name))
+        else:
+            _write_tune_rebuild_progress(
+                run_dir,
+                phase="skip_playwright",
+                detail="沿用现有 animation 文件",
+            )
 
-    animation_for_final = animation_base
-    overrides = frame_override_files(run_dir) if apply_overrides else {}
-    if overrides:
-        animation_for_final = run_dir / "animation_overrides.mp4"
-        apply_frame_overrides(animation_base, plan, overrides, animation_for_final)
+        animation_for_final = animation_base
+        overrides = frame_override_files(run_dir) if apply_overrides else {}
+        if overrides:
+            animation_for_final = run_dir / "animation_overrides.mp4"
+            _write_tune_rebuild_progress(
+                run_dir,
+                phase="ffmpeg_overlays",
+                detail=f"ffmpeg 叠加 {len(overrides)} 处关键帧并重编码（CPU 密集，可能需数分钟）",
+            )
+            apply_frame_overrides(animation_base, plan, overrides, animation_for_final)
+            _write_tune_rebuild_progress(run_dir, phase="overlays_done")
 
-    tts_dir = run_dir / "tts_segments"
-    if synth_tts:
-        files = tts_stage.synth_segments(plan, out_dir=tts_dir)
-    else:
-        files = [tts_dir / f"seg_{seg.index:02d}.mp3" for seg in plan.segments]
-        if not all(f.exists() for f in files):
+        tts_dir = run_dir / "tts_segments"
+        _write_tune_rebuild_progress(run_dir, phase="narration", detail="组装旁白轨")
+        if synth_tts:
             files = tts_stage.synth_segments(plan, out_dir=tts_dir)
+        else:
+            files = [tts_dir / f"seg_{seg.index:02d}.mp3" for seg in plan.segments]
+            if not all(f.exists() for f in files):
+                files = tts_stage.synth_segments(plan, out_dir=tts_dir)
 
-    narration = run_dir / "narration_tuned.mp3"
-    tts_stage.assemble_track(plan, files, narration, segment_options=segment_options)
+        narration = run_dir / "narration_tuned.mp3"
+        tts_stage.assemble_track(plan, files, narration, segment_options=segment_options)
 
-    final = run_dir / "final_tuned.mp4"
-    composite_stage.composite_no_pip(animation_for_final, final, narration_mp3=narration)
-    frames = extract_frames(final, plan, run_dir / "frames_tuned")
-    return {
-        "animation": animation_for_final,
-        "narration": narration,
-        "final": final,
-        "frames": frames,
-    }
+        final = run_dir / "final_tuned.mp4"
+        _write_tune_rebuild_progress(run_dir, phase="composite", detail="合成 final_tuned.mp4")
+        composite_stage.composite_no_pip(animation_for_final, final, narration_mp3=narration)
+
+        _write_tune_rebuild_progress(run_dir, phase="extract_frames", detail="抽取预览帧")
+        frames = extract_frames(final, plan, run_dir / "frames_tuned")
+        ok = True
+        return {
+            "animation": animation_for_final,
+            "narration": narration,
+            "final": final,
+            "frames": frames,
+        }
+    finally:
+        if ok:
+            tp = run_dir / TUNE_REBUILD_PROGRESS
+            if tp.exists():
+                tp.unlink()
 
 
 def save_frame_override(run_dir: Path, scene_index: int, data: bytes, suffix: str) -> Path:

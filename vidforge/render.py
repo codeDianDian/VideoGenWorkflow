@@ -224,9 +224,14 @@ def render_with_playwright(project_dir: Path, output_path: Path, plan: ScriptPla
         "ffmpeg", "-y",
         "-i", webm,
         "-r", str(settings.fps),
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        os.environ.get("VIDFORGE_FFMPEG_PRESET", "fast"),
+        "-movflags",
+        "+faststart",
         str(output_path),
     ]
     console.log(f"[cyan]$[/cyan] {' '.join(cmd)}")

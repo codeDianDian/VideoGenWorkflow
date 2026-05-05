@@ -285,6 +285,69 @@ def _bump_tune_widget_generation(run_dir_name: str) -> None:
     st.session_state[k] = int(st.session_state.get(k, 0)) + 1
 
 
+TUNE_REBUILD_STATUS = "_tune_rebuild_status.json"
+
+
+def _tune_bg_job_key(run_dir_name: str) -> str:
+    return f"tune_bg_job_{run_dir_name}"
+
+
+def _render_tune_job_poll(selected: Path) -> None:
+    """Poll disk for long-running rebuild_tuned_outputs started from a background thread."""
+    key = _tune_bg_job_key(selected.name)
+    if not st.session_state.get(key):
+        return
+    try:
+        poll_s = float(os.environ.get("VIDFORGE_UI_POLL_S", "1"))
+        poll_s = max(0.4, min(poll_s, 15.0))
+        frag = st.fragment(run_every=timedelta(seconds=poll_s))  # type: ignore[attr-defined]
+    except Exception:
+        def _frag_noop(f):
+            return f
+
+        frag = _frag_noop
+
+    @frag
+    def _poll() -> None:
+        if not st.session_state.get(key):
+            return
+        prog = selected / optimize_stage.TUNE_REBUILD_PROGRESS
+        if prog.exists():
+            try:
+                d = json.loads(prog.read_text(encoding="utf-8"))
+                ph = d.get("phase", "?")
+                de = d.get("detail") or ""
+                ut = d.get("updated_at") or ""
+                st.info(
+                    "后期任务进行中："
+                    f"**{ph}**"
+                    + (f" — {de}" if de else "")
+                    + (f" · `updated_at={ut}`" if ut else "")
+                )
+            except Exception:
+                st.caption("后期任务进行中（正在读取进度文件）…")
+        stp = selected / TUNE_REBUILD_STATUS
+        if not stp.exists():
+            return
+        try:
+            data = json.loads(stp.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        st.session_state.pop(key, None)
+        try:
+            stp.unlink()
+        except OSError:
+            pass
+        if data.get("ok"):
+            _bump_tune_widget_generation(selected.name)
+            st.success(f"已完成：`{data.get('final', '')}`")
+        else:
+            st.error(data.get("error", "任务失败"))
+        st.rerun()
+
+    _poll()
+
+
 def _raw_timeline_issues(rows: list[dict]) -> list[str]:
     issues: list[str] = []
     ordered = sorted(rows, key=lambda r: (float(r["start"]), int(r["idx"])))
@@ -311,6 +374,7 @@ def _render_post_tune(selected: Path) -> None:
         return
 
     st.subheader("后期微调")
+    _render_tune_job_poll(selected)
     tuned_final = selected / "final_tuned.mp4"
     tuned_narration = selected / "narration_tuned.mp3"
     if tuned_final.exists():
@@ -598,28 +662,59 @@ def _render_post_tune(selected: Path) -> None:
             except Exception as exc:
                 st.error(f"重新生成失败: {exc}")
     with c4:
+        tune_busy = bool(st.session_state.get(_tune_bg_job_key(selected.name)))
         if st.button(
             "重渲染动画+成片",
             key=f"rerender_tune_{selected.name}",
             use_container_width=True,
-            disabled=new_plan is None,
-            help="画面开始/结束变更后使用。会重新渲染动画，并按当前旁白参数合成。",
+            disabled=new_plan is None or tune_busy,
+            help="画面开始/结束变更后使用。会重新渲染动画，并按当前旁白参数合成。耗时较长时已改为后台运行，下方会显示阶段。",
         ):
             try:
                 assert new_plan is not None
                 optimize_stage.write_plan_with_backup(new_plan, selected / "segments.json")
                 optimize_stage.save_tuning(selected, current_tuning)
-                with st.spinner("正在重渲染动画并生成优化版..."):
-                    out = optimize_stage.rebuild_tuned_outputs(
-                        selected,
-                        new_plan,
-                        render_animation=True,
-                        synth_tts=narration_changed,
-                        apply_overrides=True,
-                        segment_options=current_tuning,
-                    )
-                st.success(f"已生成优化版: {out['final'].name}")
-                _bump_tune_widget_generation(selected.name)
+                plan_snap = new_plan
+                tune_snap = dict(current_tuning)
+                narr_snap = narration_changed
+                st.session_state[_tune_bg_job_key(selected.name)] = True
+                for fname in (TUNE_REBUILD_STATUS, optimize_stage.TUNE_REBUILD_PROGRESS):
+                    p = selected / fname
+                    try:
+                        p.unlink()
+                    except OSError:
+                        pass
+
+                def _work() -> None:
+                    try:
+                        out = optimize_stage.rebuild_tuned_outputs(
+                            selected,
+                            plan_snap,
+                            render_animation=True,
+                            synth_tts=narr_snap,
+                            apply_overrides=True,
+                            segment_options=tune_snap,
+                        )
+                        (selected / TUNE_REBUILD_STATUS).write_text(
+                            json.dumps(
+                                {"ok": True, "final": str(out["final"])},
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                    except Exception as exc:
+                        (selected / TUNE_REBUILD_STATUS).write_text(
+                            json.dumps(
+                                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+
+                threading.Thread(target=_work, daemon=True).start()
+                st.info("已在后台启动重渲染（Playwright + 关键帧叠加可能需数分钟）。页面将自动刷新进度。")
                 st.rerun()
             except Exception as exc:
                 st.error(f"重渲染失败: {exc}")
@@ -1021,9 +1116,18 @@ def _render_run_browser() -> None:
         if rbpc:
             st.caption(rbpc)
 
+    final_tuned = selected / "final_tuned.mp4"
     final_video = selected / "final.mp4"
+    anim_tuned = selected / "animation_tuned.mp4"
     anim_video = selected / "animation.mp4"
-    show_video = final_video if final_video.exists() else anim_video
+    if final_tuned.exists():
+        show_video = final_tuned
+    elif final_video.exists():
+        show_video = final_video
+    elif anim_tuned.exists():
+        show_video = anim_tuned
+    else:
+        show_video = anim_video
     if show_video.exists():
         st.video(str(show_video))
 
